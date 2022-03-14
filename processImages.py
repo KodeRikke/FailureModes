@@ -1,4 +1,3 @@
-# Importing Image module from PIL package 
 from PIL import Image
 import Augmentor
 import os
