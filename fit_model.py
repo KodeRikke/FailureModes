@@ -1,18 +1,18 @@
 path = "" # path containing the datasets folder
 
 # libraries
-import re
-from tkinter import Y
+# import re
+# from tkinter import Y
 import math
 import os
-import copy
+# import copy
 import cv2
 import heapq
 import matplotlib.image as plt
 import numpy as np
 import time
-from torch.autograd import Variable
-from PIL import Image
+# from torch.autograd import Variable
+# from PIL import Image
 import torch
 import torch.nn as nn
 import torch.utils.model_zoo as model_zoo
