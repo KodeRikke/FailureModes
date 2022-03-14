@@ -1,3 +1,5 @@
+path = "" # path containing the datasets folder
+
 # libraries
 import re
 from tkinter import Y
@@ -17,8 +19,6 @@ import torch.utils.model_zoo as model_zoo
 import torch.nn.functional as F
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
-
-path = "ProtoPNet/"
 
 # functions
 def makedir(path):
@@ -993,8 +993,8 @@ warm_optimizer = torch.optim.Adam([{'params': ppnet.add_on_layers.parameters(), 
 last_layer_optimizer = torch.optim.Adam([{'params': ppnet.last_layer.parameters(), 'lr': 1e-4}])
 
 epochs = 1000
-warm_epochs = 10
-push_start = 50
+warm_epochs = 1
+push_start = 50000
 push_epochs = [i for i in range(epochs) if i % 10 == 0]
 coefs = {'crs_ent': 1, 'clst': 0.8, 'sep': -0.08, 'l1': 1e-4,}
 
