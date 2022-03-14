@@ -9,18 +9,4 @@
 
 Package info:
 
-# Name                    Version                   Build  Channel
-mpmath                    1.2.1            py39h06a4308_0
-sphinxcontrib-jsmath      1.0.1              pyhd3eb1b0_0
-opencv-python             4.5.5.64                 pypi_0    pypi
-blosc                     1.21.0               h8c45485_0
-nose                      1.3.7           pyhd3eb1b0_1006
-pycosat                   0.6.3            py39h27cfd23_0
-matplotlib                3.4.3            py39h06a4308_0
-matplotlib-base           3.4.3            py39hbbc1b5f_0
-matplotlib-inline         0.1.2              pyhd3eb1b0_2
-jinja2-time               0.2.0              pyhd3eb1b0_2
-pytorch                   1.10.2          py3.9_cuda11.3_cudnn8.2.0_0    pytorch
-pytorch-mutex             1.0                        cuda    pytorch
-torchaudio                0.10.2               py39_cu113    pytorch
-torchvision               0.11.3               py39_cu113    pytorch
+
