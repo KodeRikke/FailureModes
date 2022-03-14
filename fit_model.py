@@ -964,20 +964,20 @@ train_dataset = datasets.ImageFolder(
         transforms.Compose([transforms.Resize(size=(img_size, img_size)), transforms.ToTensor(), 
                             transforms.Normalize(mean = (0.485, 0.456, 0.406), std = (0.229, 0.224, 0.225))]))
 train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=train_batch_size, shuffle=True, num_workers=2, pin_memory=True) # 4 workers?
+        train_dataset, batch_size=train_batch_size, shuffle=True, num_workers=4, pin_memory=True) # 4 workers?
 
 train_push_dataset = datasets.ImageFolder(
         path + 'datasets/cub200_cropped/train_cropped/',
         transforms.Compose([transforms.Resize(size=(img_size, img_size)),transforms.ToTensor()]))
 train_push_loader = torch.utils.data.DataLoader(
-        train_push_dataset, batch_size=train_push_batch_size, shuffle=False, num_workers=2, pin_memory=True) # 4 workers?
+        train_push_dataset, batch_size=train_push_batch_size, shuffle=False, num_workers=4, pin_memory=True) # 4 workers?
 
 test_dataset = datasets.ImageFolder(
         path + 'datasets/cub200_cropped/test_cropped/',
         transforms.Compose([transforms.Resize(size=(img_size, img_size)),transforms.ToTensor(),
                             transforms.Normalize(mean = (0.485, 0.456, 0.406), std = (0.229, 0.224, 0.225)),]))
 test_loader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=test_batch_size, shuffle=False, num_workers=2, pin_memory=True) # 4 workers?
+        test_dataset, batch_size=test_batch_size, shuffle=False, num_workers=4, pin_memory=True) # 4 workers?
 
 
 ppnet, ppnet_multi = initialize_model("")
