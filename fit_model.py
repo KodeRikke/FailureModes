@@ -415,7 +415,7 @@ def vgg19_features(pretrained=False, **kwargs):
     model.load_state_dict(my_dict, strict=False)
     return model
 
-def vgg19_bn_features(**kwargs):
+def vgg19_bn_features(pretrained=False, **kwargs):
     kwargs['init_weights'] = False
     model = VGG_features(cfg['E'], batch_norm=True, **kwargs)
     my_dict = model_zoo.load_url(model_urls['vgg19_bn'], model_dir=model_dir)
