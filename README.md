@@ -6,7 +6,4 @@
 - Batch sizes, number of epochs and so forth can be adjusted near the end of the file. The variables are set up to run one warm epoch and then run joint epochs, so we can compare speeds.
 - epoch times can be observed in the trainlog.txt file.
 
-
-Package info:
-
-
+Package info can be seen in package_info.txt
