@@ -1,5 +1,5 @@
 # Fit a ProtoPNet using the CUB-200 dataset
-- Download and extract the dataset from http://www.vision.caltech.edu/visipedia/CUB-200.html
+- Download and extract the dataset from http://www.vision.caltech.edu/visipedia/CUB-200-2011.html
 - Process the images by running the processImages.py file. You will have to adjust the path variable, so that the path contains the CUB_200_2011 directory.
 - The step above should create a datasets directory rooted in the chosen path.
 - Fit the model by running fit_model.py. Once again you will have to adjust the path variable. This time the path variable will have to contain the datasets directory.
