@@ -13,3 +13,6 @@ pytorch                   1.10.2          py3.9_cuda11.3_cudnn8.2.0_0    pytorch
 pytorch-mutex             1.0                        cuda    pytorch
 torchaudio                0.10.2               py39_cu113    pytorch
 torchvision               0.11.3               py39_cu113    pytorch
+pandas                    1.2.1                    pypi_0    pypi
+pillow                    8.2.0            py38h4fa10fc_0
+augmentor                 0.2.9                    pypi_0    pypi
