@@ -24,14 +24,14 @@ for index, row in df.iterrows():
     img_dir, img_name = img_path.split("/")
     img = im.crop((x, y, x + w, y + h))
     if split == 0:
-        makedir(path + 'ProtoPNet/datasets/cub200_cropped/test_cropped/' + img_dir)
-        img.save(path + 'ProtoPNet/datasets/cub200_cropped/test_cropped/' + img_path[:-4] + '.jpg', 'JPEG')
+        makedir(path + 'datasets/cub200_cropped/test_cropped/' + img_dir)
+        img.save(path + 'datasets/cub200_cropped/test_cropped/' + img_path[:-4] + '.jpg', 'JPEG')
     else:
-        makedir(path + 'ProtoPNet/datasets/cub200_cropped/train_cropped/' + img_dir)
-        img.save(path + 'ProtoPNet/datasets/cub200_cropped/train_cropped/' + img_path[:-4] + '.jpg', 'JPEG')
+        makedir(path + 'datasets/cub200_cropped/train_cropped/' + img_dir)
+        img.save(path + 'datasets/cub200_cropped/train_cropped/' + img_path[:-4] + '.jpg', 'JPEG')
 
-dir = path + 'ProtoPNet/datasets/cub200_cropped/train_cropped/'
-target_dir = path + 'ProtoPNet/datasets/cub200_cropped/train_cropped_augmented/'
+dir = path + 'datasets/cub200_cropped/train_cropped/'
+target_dir = path + 'datasets/cub200_cropped/train_cropped_augmented/'
 makedir(target_dir)
 folders = [os.path.join(dir, folder) for folder in next(os.walk(dir))[1]]
 target_folders = [os.path.join(target_dir, folder) for folder in next(os.walk(dir))[1]]
