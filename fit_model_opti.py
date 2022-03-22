@@ -1,6 +1,3 @@
-
-# This will cause an error after about 8 hours, but it is faster sooo...
-
 path = "./"
 
 # libraries
@@ -25,10 +22,13 @@ import torchvision.datasets as datasets
 
 model_dir = path + 'pretrained_models/'
 
+
 # functions
 def makedir(path):
     if not os.path.exists(path):
         os.makedirs(path)
+        
+makedir(model_dir)
 
 def log(line, file):
   with open(path + file, 'a+') as log:
