@@ -20,6 +20,8 @@ import torch.nn.functional as F
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 
+model_dir = path + 'pretrained_models/'
+
 # functions
 def makedir(path):
     if not os.path.exists(path):
@@ -324,112 +326,180 @@ def compute_proto_layer_rf_info_v2(img_size, layer_filter_sizes, layer_strides, 
                                                 layer_padding='VALID', previous_layer_rf_info=rf_info)
     return proto_layer_rf_info
 
-# vgg
+# resnet
 model_urls = {
-    'vgg11': 'https://download.pytorch.org/models/vgg11-bbd30ac9.pth',
-    'vgg13': 'https://download.pytorch.org/models/vgg13-c768596a.pth',
-    'vgg16': 'https://download.pytorch.org/models/vgg16-397923af.pth',
-    'vgg19': 'https://download.pytorch.org/models/vgg19-dcbb9e9d.pth',
-    'vgg11_bn': 'https://download.pytorch.org/models/vgg11_bn-6002323d.pth',
-    'vgg13_bn': 'https://download.pytorch.org/models/vgg13_bn-abd245e5.pth',
-    'vgg16_bn': 'https://download.pytorch.org/models/vgg16_bn-6c64b313.pth',
-    'vgg19_bn': 'https://download.pytorch.org/models/vgg19_bn-c79401a0.pth',
+    'resnet34': 'https://download.pytorch.org/models/resnet34-333f7ec4.pth'
 }
-
-model_dir = path + 'pretrained_models'
 
 cfg = {'A': [64, 'M', 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
        'B': [64, 64, 'M', 128, 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
        'D': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M'],
        'E': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],}
 
-class VGG_features(nn.Module):
+def conv3x3(in_planes, out_planes, stride=1):
+    """3x3 convolution with padding"""
+    return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
+                     padding=1, bias=False)
 
-    def __init__(self, cfg, batch_norm=False, init_weights=True):
-        super(VGG_features, self).__init__()
-        self.batch_norm = batch_norm # use concept whitening instead?
-        self.kernel_sizes = []
-        self.strides = []
-        self.paddings = []
-        self.features = self._make_layers(cfg, batch_norm)
-        if init_weights:
-            self._initialize_weights()
+def conv1x1(in_planes, out_planes, stride=1):
+    """1x1 convolution"""
+    return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
+
+class BasicBlock(nn.Module):
+    # class attribute
+    expansion = 1
+    num_layers = 2
+
+    def __init__(self, inplanes, planes, stride=1, downsample=None):
+        super(BasicBlock, self).__init__()
+        # only conv with possibly not 1 stride
+        self.conv1 = conv3x3(inplanes, planes, stride)
+        self.bn1 = nn.BatchNorm2d(planes)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv2 = conv3x3(planes, planes)
+        self.bn2 = nn.BatchNorm2d(planes)
+
+        # if stride is not 1 then self.downsample cannot be None
+        self.downsample = downsample
+        self.stride = stride
 
     def forward(self, x):
-        x = self.features(x)
-        return x
+        identity = x
 
-    def _initialize_weights(self):
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+
+        if self.downsample is not None:
+            identity = self.downsample(x)
+
+        # the residual connection
+        out += identity
+        out = self.relu(out)
+
+        return out
+
+    def block_conv_info(self):
+        block_kernel_sizes = [3, 3]
+        block_strides = [self.stride, 1]
+        block_paddings = [1, 1]
+
+        return block_kernel_sizes, block_strides, block_paddings
+
+class ResNet_features(nn.Module):
+    '''
+    the convolutional layers of ResNet
+    the average pooling and final fully convolutional layer is removed
+    '''
+    def __init__(self, block, layers, num_classes=1000, zero_init_residual=False):
+        super(ResNet_features, self).__init__()
+
+        self.inplanes = 64
+
+        # the first convolutional layer before the structured sequence of blocks
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
+                               bias=False)
+        self.bn1 = nn.BatchNorm2d(64)
+        self.relu = nn.ReLU(inplace=True)
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        # comes from the first conv and the following max pool
+        self.kernel_sizes = [7, 3]
+        self.strides = [2, 2]
+        self.paddings = [3, 1]
+
+        # the following layers, each layer is a sequence of blocks
+        self.block = block
+        self.layers = layers
+        self.layer1 = self._make_layer(block=block, planes=64, num_blocks=self.layers[0])
+        self.layer2 = self._make_layer(block=block, planes=128, num_blocks=self.layers[1], stride=2)
+        self.layer3 = self._make_layer(block=block, planes=256, num_blocks=self.layers[2], stride=2)
+        self.layer4 = self._make_layer(block=block, planes=512, num_blocks=self.layers[3], stride=2)
+
+        # initialize the parameters
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
             elif isinstance(m, nn.BatchNorm2d):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.Linear):
-                nn.init.normal_(m.weight, 0, 0.01)
-                nn.init.constant_(m.bias, 0)
 
-    def _make_layers(self, cfg, batch_norm):
-        self.n_layers = 0
+        if zero_init_residual:
+            for m in self.modules():
+                if isinstance(m, Bottleneck):
+                    nn.init.constant_(m.bn3.weight, 0)
+                elif isinstance(m, BasicBlock):
+                    nn.init.constant_(m.bn2.weight, 0)
 
-        layers, in_channels = [], 3
-        for v in cfg:
-            if v == 'M':
-                self.kernel_sizes.append(2)
-                self.strides.append(2)
-                self.paddings.append(0)
-                layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
-            else:
-                self.n_layers += 1
-                self.kernel_sizes.append(3)
-                self.strides.append(1)
-                self.paddings.append(1)
-                conv2d = nn.Conv2d(in_channels, v, kernel_size=3, padding=1)
-                if batch_norm:
-                    layers += [conv2d, nn.BatchNorm2d(v), nn.ReLU(inplace=True)]
-                else:
-                    layers += [conv2d, nn.ReLU(inplace=True)]
+    def _make_layer(self, block, planes, num_blocks, stride=1):
+        downsample = None
+        if stride != 1 or self.inplanes != planes * block.expansion:
+            downsample = nn.Sequential(
+                conv1x1(self.inplanes, planes * block.expansion, stride),
+                nn.BatchNorm2d(planes * block.expansion),
+            )
 
-                in_channels = v
+        layers = []
+        # only the first block has downsample that is possibly not None
+        layers.append(block(self.inplanes, planes, stride, downsample))
+
+        self.inplanes = planes * block.expansion
+        for _ in range(1, num_blocks):
+            layers.append(block(self.inplanes, planes))
+
+        # keep track of every block's conv size, stride size, and padding size
+        for each_block in layers:
+            block_kernel_sizes, block_strides, block_paddings = each_block.block_conv_info()
+            self.kernel_sizes.extend(block_kernel_sizes)
+            self.strides.extend(block_strides)
+            self.paddings.extend(block_paddings)
 
         return nn.Sequential(*layers)
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+
+        return x
 
     def conv_info(self):
         return self.kernel_sizes, self.strides, self.paddings
 
     def num_layers(self):
-        return self.n_layers
+        '''
+        the number of conv layers in the network, not counting the number
+        of bypass layers
+        '''
 
-def vgg19_features(pretrained=False, **kwargs):
-    kwargs['init_weights'] = False
-    model = VGG_features(cfg['E'], batch_norm=False, **kwargs)
-    my_dict, keys_to_remove = model_zoo.load_url(model_urls['vgg19'], model_dir=model_dir), set()
-    for key in my_dict:
-        if key.startswith('classifier'):
-            keys_to_remove.add(key)
-    for key in keys_to_remove:
-        del my_dict[key]
-    model.load_state_dict(my_dict, strict=False)
+        return (self.block.num_layers * self.layers[0]
+              + self.block.num_layers * self.layers[1]
+              + self.block.num_layers * self.layers[2]
+              + self.block.num_layers * self.layers[3]
+              + 1)
+
+def resnet34_features(pretrained=False, **kwargs):
+    """Constructs a ResNet-34 model.
+    Args:
+        pretrained (bool): If True, returns a model pre-trained on ImageNet
+    """
+    model = ResNet_features(BasicBlock, [3, 4, 6, 3], **kwargs)
+    if pretrained:
+        my_dict = model_zoo.load_url(model_urls['resnet34'], model_dir=model_dir)
+        my_dict.pop('fc.weight')
+        my_dict.pop('fc.bias')
+        model.load_state_dict(my_dict, strict=False)
     return model
 
-def vgg19_bn_features(pretrained=False, **kwargs):
-    kwargs['init_weights'] = False
-    model = VGG_features(cfg['E'], batch_norm=True, **kwargs)
-    my_dict = model_zoo.load_url(model_urls['vgg19_bn'], model_dir=model_dir)
-    keys_to_remove = set()
-    for key in my_dict:
-        if key.startswith('classifier'):
-            keys_to_remove.add(key)
-    for key in keys_to_remove:
-        del my_dict[key]
-    model.load_state_dict(my_dict, strict=False)
-    return model
-
-base_architecture_to_features = {'vgg19': vgg19_features,
-                                 'vgg19_bn': vgg19_bn_features}
+base_architecture_to_features = {'resnet34': resnet34_features,}
 
 # model fugle
 class PPNet(nn.Module):
@@ -562,6 +632,9 @@ def _train_or_test(model, dataloader, optimizer=None, use_l1_mask=True,
     start = time.time()
     n_examples, n_correct, n_batches, total_cross_entropy = 0, 0, 0, 0
     total_cluster_cost, total_separation_cost, total_avg_separation_cost = 0, 0, 0
+    
+#     scaler = torch.cuda.amp.GradScaler()
+#     torch.cuda.empty_cache()
 
     for _, (image, label) in enumerate(dataloader):
         input, target = image.cuda(), label.cuda()
@@ -608,14 +681,20 @@ def _train_or_test(model, dataloader, optimizer=None, use_l1_mask=True,
         if is_train:
             del prototypes_of_correct_class
             del l1_mask
+#             with torch.cuda.amp.autocast():
             if coefs is not None:
                 loss = (coefs['crs_ent'] * cross_entropy + coefs['clst'] * cluster_cost
-                        + coefs['sep'] * separation_cost + coefs['l1'] * l1)
+                       + coefs['sep'] * separation_cost + coefs['l1'] * l1)
             else:
                 loss = cross_entropy + 0.8 * cluster_cost - 0.08 * separation_cost + 1e-4 * l1
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+#             scaler.scale(loss).backward()
+#             scaler.step(optimizer)
+#             scaler.update()
+            
+            
             
     end = time.time()
 
@@ -886,60 +965,72 @@ def update_prototypes_on_batch(search_batch_input,
 def fit(model, modelmulti, epochs, warm_epochs):
     log('start training', "trainlog.txt")
     for epoch in range(epochs):
-        log('epoch: \t{0}'.format(epoch), "trainlog.txt")
-
-        if epoch < warm_epochs:
+        model.train()
+        modelmulti.train()
+        log('epoch: \t{0}'.format(epoch + epoch_reached), "trainlog.txt")
+        
+        if epoch + epoch_reached < warm_epochs:
             warm_only(model=modelmulti)
             train(model=modelmulti, dataloader=train_loader, optimizer=warm_optimizer, coefs=coefs)
         else:
             joint(model=modelmulti)
             train(model=modelmulti, dataloader=train_loader, optimizer=joint_optimizer, coefs=coefs)
             joint_lr_scheduler.step()
+        model.eval()
+        modelmulti.eval()
         accu = test(model=modelmulti, dataloader=test_loader)
+        torch.save({
+            'epoch': epoch + epoch_reached,
+            'model_state_dict': model.state_dict(),
+            'joint_optimizer_state_dict': joint_optimizer.state_dict(),
+            'last_layer_optimizer_state_dict': last_layer_optimizer.state_dict(),
+            'warm_optimizer_state_dict' : warm_optimizer.state_dict()
+            }, os.path.join(model_dir, (str(epoch + epoch_reached) + 'nopush' + '{0:.4f}.pth').format(accu)))
 
-        torch.save(obj=model, f = os.path.join(model_dir, (str(epoch) + 'nopush' + '{0:.4f}.pth').format(accu)))
-
-#        if epoch >= push_start and epoch in push_epochs:
-#            push_prototypes(
-#                train_push_loader, # pytorch dataloader unnorm
-#                prototype_network_parallel=modelmulti,
-#                preprocess_input_function = preprocess, # norma?
-#                prototype_layer_stride=1,
-#                root_dir_for_saving_prototypes = model_dir + '/img/',
-#                epoch_number = epoch, # if not provided, prototypes saved previously will be overwritten
-#                prototype_img_filename_prefix = 'prototype-img',
-#                prototype_self_act_filename_prefix = 'prototype-self-act',
-#                proto_bound_boxes_filename_prefix = 'bb',
-#                save_prototype_class_identity=True)
-#            accu = test(model=modelmulti, dataloader=test_loader)
-#            torch.save(obj=model, f = os.path.join(model_dir, (str(epoch) + 'push' + '{0:.4f}.pth').format(accu)))
-#
-#            last_only(model=modelmulti)
-#            for i in range(20):
-#                log('iteration: \t{0}'.format(i), "trainlog.txt")
-#                _ = train(model=modelmulti, dataloader=train_loader, optimizer=last_layer_optimizer, coefs=coefs)
-#                accu = test(model=modelmulti, dataloader=test_loader)
-#                torch.save(obj=model, f = os.path.join(model_dir, (str(epoch) + '_' + str(i) + 'push').format(accu)))
+#         if epoch >= push_start and epoch in push_epochs:
+#             push_prototypes(
+#                 train_push_loader, # pytorch dataloader unnorm
+#                 prototype_network_parallel=modelmulti,
+#                 preprocess_input_function = preprocess, # norma?
+#                 prototype_layer_stride=1,
+#                 root_dir_for_saving_prototypes = model_dir + '/img/',
+#                 epoch_number = epoch + epoch_reached, # if not provided, prototypes saved previously will be overwritten
+#                 prototype_img_filename_prefix = 'prototype-img',
+#                 prototype_self_act_filename_prefix = 'prototype-self-act',
+#                 proto_bound_boxes_filename_prefix = 'bb',
+#                 save_prototype_class_identity=True)
+#             last_only(model=modelmulti)
+#             for i in range(20):
+#                 log('iteration: \t{0}'.format(i), "trainlog.txt")
+#                 _ = train(model=modelmulti, dataloader=train_loader, optimizer=last_layer_optimizer, coefs=coefs)
+#                 accu = test(model=modelmulti, dataloader=test_loader)
+#             torch.save({
+#                 'epoch': epoch + epoch_reached,
+#                 'model_state_dict': model.state_dict(),
+#                 'joint_optimizer_state_dict': joint_optimizer.state_dict(),
+#                 'last_layer_optimizer_state_dict': last_layer_optimizer.state_dict(),
+#                 'warm_optimizer_state_dict' : warm_optimizer.state_dict()
+#                 }, os.path.join(model_dir, (str(epoch + epoch_reached) + 'push' + '{0:.4f}.pth').format(accu)))
 
 def initialize_model(model_name = ""):
-    features = base_architecture_to_features['vgg19'](pretrained = True)
+    features = base_architecture_to_features['resnet34'](pretrained = True)
     layer_filter_sizes, layer_strides, layer_paddings = features.conv_info()
 
-    if model_name == "":
-        ppnet = PPNet(features=features,
-                    img_size = img_size,
-                    prototype_shape = (2000, 512, 1, 1),
-                    num_classes = 200,
-                    init_weights = True,
-                    prototype_activation_function = 'log',
-                    add_on_layers_type = 'bottleneck',
-                    proto_layer_rf_info = compute_proto_layer_rf_info_v2(img_size = 224,
-                                                                        layer_filter_sizes = layer_filter_sizes,
-                                                                        layer_strides = layer_strides,
-                                                                        layer_paddings = layer_paddings,
-                                                                        prototype_kernel_size = 1))
-    else:
-        ppnet = torch.load(path + "pretrained_models/" + model_name)
+    ppnet = PPNet(features=features,
+                  img_size = img_size,
+                  prototype_shape = (2000, 512, 1, 1),
+                  num_classes = 200,
+                  init_weights = True,
+                  prototype_activation_function = 'log',
+                  add_on_layers_type = 'bottleneck',
+                  proto_layer_rf_info = compute_proto_layer_rf_info_v2(img_size = 224,
+                                                                      layer_filter_sizes = layer_filter_sizes,
+                                                                      layer_strides = layer_strides,
+                                                                      layer_paddings = layer_paddings,
+                                                                      prototype_kernel_size = 1))
+    if model_name != "":
+        checkpoint = torch.load(model_dir + model_name)
+        ppnet.load_state_dict(checkpoint['model_state_dict'])
 
     ppnet = ppnet.cuda()
     ppnet_multi = torch.nn.DataParallel(ppnet)
@@ -949,6 +1040,7 @@ def initialize_model(model_name = ""):
 
 cuda = torch.device('cuda')  if torch.cuda.is_available() else "cpu"
 print("Using : ", cuda)
+
 
 img_size = 224
 prototype_shape = (2000, 128, 1, 1)
@@ -979,24 +1071,34 @@ test_dataset = datasets.ImageFolder(
 test_loader = torch.utils.data.DataLoader(
         test_dataset, batch_size=test_batch_size, shuffle=False, num_workers=4, pin_memory=True) # 4 workers?
 
-
-ppnet, ppnet_multi = initialize_model("")
+model_name = ""
+if model_name != "":
+    checkpoint = torch.load(model_dir + model_name)
+ppnet, ppnet_multi = initialize_model(model_name = model_name)
 
 # optimizers 
 joint_optimizer = torch.optim.Adam([{'params': ppnet.features.parameters(), 'lr': 1e-4, 'weight_decay': 1e-3}, 
                                         {'params': ppnet.add_on_layers.parameters(), 'lr': 3e-3, 'weight_decay': 1e-3},
                                         {'params': ppnet.prototype_vectors, 'lr': 3e-3},])
 joint_lr_scheduler = torch.optim.lr_scheduler.StepLR(joint_optimizer, step_size = 5, gamma=0.1)
+last_layer_optimizer = torch.optim.Adam([{'params': ppnet.last_layer.parameters(), 'lr': 1e-4}])
 warm_optimizer = torch.optim.Adam([{'params': ppnet.add_on_layers.parameters(), 'lr': 3e-3, 'weight_decay': 1e-3},
                                 {'params': ppnet.prototype_vectors, 'lr': 3e-3},])
 
-last_layer_optimizer = torch.optim.Adam([{'params': ppnet.last_layer.parameters(), 'lr': 1e-4}])
-
 epochs = 1000
-warm_epochs = 1
-push_start = 50000
+warm_epochs = 5
+epoch_reached = 0
+push_start = 1000
 push_epochs = [i for i in range(epochs) if i % 10 == 0]
 coefs = {'crs_ent': 1, 'clst': 0.8, 'sep': -0.08, 'l1': 1e-4,}
+
+if model_name != "":
+    epoch_reached = checkpoint['epoch'] + 1
+    print(epoch_reached)
+    joint_optimizer.load_state_dict(checkpoint['joint_optimizer_state_dict'])
+    last_layer_optimizer.load_state_dict(checkpoint['last_layer_optimizer_state_dict'])
+    warm_optimizer.load_state_dict(checkpoint['warm_optimizer_state_dict'])
+    
 
 # run fitting
 fit(ppnet, ppnet_multi, epochs = epochs, warm_epochs = warm_epochs)
