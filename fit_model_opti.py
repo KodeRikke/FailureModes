@@ -1099,7 +1099,6 @@ coefs = {'crs_ent': 1, 'clst': 0.8, 'sep': -0.08, 'l1': 1e-4,}
 
 if model_name != "":
     epoch_reached = checkpoint['epoch'] + 1
-    print(epoch_reached)
     joint_optimizer.load_state_dict(checkpoint['joint_optimizer_state_dict'])
     last_layer_optimizer.load_state_dict(checkpoint['last_layer_optimizer_state_dict'])
     warm_optimizer.load_state_dict(checkpoint['warm_optimizer_state_dict'])
