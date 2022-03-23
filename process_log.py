@@ -2,7 +2,7 @@ import re
 import numpy as np
 import matplotlib.pyplot as plt
 
-path = "C:/Users/OhRai/desktop/IAI/"
+path = ""
 coefs = {'crs_ent': 1, 'clst': 0.8, 'sep': -0.08, 'l1': 1e-4,}
 log_data, acc = [], []
 
