@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+from settings import path
 
 img_size = 224
 prototype_shape = (2000, 128, 1, 1)
@@ -29,17 +30,6 @@ test_dataset = datasets.ImageFolder(
                             transforms.Normalize(mean = (0.485, 0.456, 0.406), std = (0.229, 0.224, 0.225)),]))
 test_loader = torch.utils.data.DataLoader(
         test_dataset, batch_size=test_batch_size, shuffle=False, num_workers=4, pin_memory=True) # 4 workers?
-
-############################################
-############################################
-# MODEL INITIALIZATION do regex plaeaseesese
-epoch_reached = 0 # remember it will start from 0, so it should be one + the number in the model name
-ppnet, ppnet_multi = initialize_model("")
-
-torch.backends.cudnn.benchmark = True
-############################################
-############################################
-############################################
 
 # optimizers 
 joint_optimizer = torch.optim.Adam([{'params': ppnet.features.parameters(), 'lr': 1e-4, 'weight_decay': 1e-3}, 
