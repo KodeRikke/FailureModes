@@ -1,4 +1,4 @@
-path = "" # path containing the datasets folder
+path = "C:/Users/OhRai/Desktop/IAI/" # path containing the datasets folder
 
 # libraries
 # import re
