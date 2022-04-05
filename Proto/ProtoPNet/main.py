@@ -16,10 +16,9 @@ import push
 import prune
 import train_and_test as tnt
 import save
-from log import create_logger
+from log import log
 from preprocess import mean, std, preprocess_input_function
 
-os.environ['CUDA_VISIBLE_DEVICES'] = args.gpuid[0]
 print(os.environ['CUDA_VISIBLE_DEVICES'])
 
 # book keeping namings and code
@@ -48,8 +47,7 @@ proto_bound_boxes_filename_prefix = 'bb'
 from settings import train_dir, test_dir, train_push_dir, \
                      train_batch_size, test_batch_size, train_push_batch_size
 
-normalize = transforms.Normalize(mean=mean,
-                                 std=std)
+normalize = transforms.Normalize(mean=mean, std=std)
 
 # all datasets
 # train set
@@ -62,7 +60,7 @@ train_dataset = datasets.ImageFolder(
     ]))
 train_loader = torch.utils.data.DataLoader(
     train_dataset, batch_size=train_batch_size, shuffle=True,
-    num_workers=4, pin_memory=False)
+    num_workers=4, pin_memory=True)
 # push set
 train_push_dataset = datasets.ImageFolder(
     train_push_dir,
@@ -72,7 +70,7 @@ train_push_dataset = datasets.ImageFolder(
     ]))
 train_push_loader = torch.utils.data.DataLoader(
     train_push_dataset, batch_size=train_push_batch_size, shuffle=False,
-    num_workers=4, pin_memory=False)
+    num_workers=4, pin_memory=True)
 # test set
 test_dataset = datasets.ImageFolder(
     test_dir,
@@ -83,13 +81,7 @@ test_dataset = datasets.ImageFolder(
     ]))
 test_loader = torch.utils.data.DataLoader(
     test_dataset, batch_size=test_batch_size, shuffle=False,
-    num_workers=4, pin_memory=False)
-
-# we should look into distributed sampler more carefully at torch.utils.data.distributed.DistributedSampler(train_dataset)
-log('training set size: {0}'.format(len(train_loader.dataset)))
-log('push set size: {0}'.format(len(train_push_loader.dataset)))
-log('test set size: {0}'.format(len(test_loader.dataset)))
-log('batch size: {0}'.format(train_batch_size))
+    num_workers=4, pin_memory=True)
 
 # construct the model
 ppnet = model.construct_PPNet(base_architecture=base_architecture,
@@ -132,106 +124,55 @@ from settings import coefs
 from settings import num_train_epochs, num_warm_epochs, push_start, push_epochs
 
 # train the model
-log('start training')
-import copy
-for epoch in range(num_train_epochs):
-    log('epoch: \t{0}'.format(epoch))
-
-    if epoch < num_warm_epochs:
-        tnt.warm_only(model=ppnet_multi, log=log)
-        _ = tnt.train(model=ppnet_multi, dataloader=train_loader, optimizer=warm_optimizer,
-                      class_specific=class_specific, coefs=coefs, log=log)
-    else:
-        tnt.joint(model=ppnet_multi, log=log)
-        joint_lr_scheduler.step()
-        _ = tnt.train(model=ppnet_multi, dataloader=train_loader, optimizer=joint_optimizer,
-                      class_specific=class_specific, coefs=coefs, log=log)
-
-    accu = tnt.test(model=ppnet_multi, dataloader=test_loader,
-                    class_specific=class_specific, log=log)
-    save.save_model_w_condition(model=ppnet, model_dir=model_dir, model_name=str(epoch) + 'nopush', accu=accu,
-                                target_accu=0.70, log=log)
-
-    if epoch >= push_start and epoch in push_epochs:
-        push.push_prototypes(
-            train_push_loader, # pytorch dataloader (must be unnormalized in [0,1])
-            prototype_network_parallel=ppnet_multi, # pytorch network with prototype_vectors
-            class_specific=class_specific,
-            preprocess_input_function=preprocess_input_function, # normalize if needed
-            prototype_layer_stride=1,
-            root_dir_for_saving_prototypes=img_dir, # if not None, prototypes will be saved here
-            epoch_number=epoch, # if not provided, prototypes saved previously will be overwritten
-            prototype_img_filename_prefix=prototype_img_filename_prefix,
-            prototype_self_act_filename_prefix=prototype_self_act_filename_prefix,
-            proto_bound_boxes_filename_prefix=proto_bound_boxes_filename_prefix,
-            save_prototype_class_identity=True,
-            log=log)
-        accu = tnt.test(model=ppnet_multi, dataloader=test_loader,
-                        class_specific=class_specific, log=log)
-        save.save_model_w_condition(model=ppnet, model_dir=model_dir, model_name=str(epoch) + 'push', accu=accu,
-                                    target_accu=0.70, log=log)
-
-        if prototype_activation_function != 'linear':
-            tnt.last_only(model=ppnet_multi, log=log)
-            for i in range(20):
-                log('iteration: \t{0}'.format(i))
-                _ = tnt.train(model=ppnet_multi, dataloader=train_loader, optimizer=last_layer_optimizer,
-                              class_specific=class_specific, coefs=coefs, log=log)
-                accu = tnt.test(model=ppnet_multi, dataloader=test_loader,
-                                class_specific=class_specific, log=log)
-                save.save_model_w_condition(model=ppnet, model_dir=model_dir, model_name=str(epoch) + '_' + str(i) + 'push', accu=accu,
-                                            target_accu=0.70, log=log)
-   
-logclose()
-
 def fit(model, modelmulti, epochs, warm_epochs, epoch_reached):
-    # log('start training', "trainlog.txt")
-    # for epoch in range(epoch_reached, epochs):
-    #     model.train()
-    #     modelmulti.train()
-    #     log('epoch: \t{0}'.format(epoch), "trainlog.txt")
+    log('start training', "trainlog.txt")
+    for epoch in range(epoch_reached, epochs):
+        model.train()
+        modelmulti.train()
+        log('epoch: \t{0}'.format(epoch), "trainlog.txt")
         
-    #     if epoch < warm_epochs:
-    #         warm_only(model=modelmulti)
-    #         train(model=modelmulti, dataloader=train_loader, optimizer=warm_optimizer, coefs=coefs)
-    #     else:
-    #         joint(model=modelmulti)
-    #         train(model=modelmulti, dataloader=train_loader, optimizer=joint_optimizer, coefs=coefs)
-    #         joint_lr_scheduler.step()
-    #     model.eval()
-    #     modelmulti.eval()
-    #     accu = test(model=modelmulti, dataloader=test_loader)
-    #     torch.save({
-    #         'epoch': epoch,
-    #         'model_state_dict': model.state_dict(),
-    #         'joint_optimizer_state_dict': joint_optimizer.state_dict(),
-    #         'joint_lr_scheduler_state_dict': joint_lr_scheduler.state_dict(),
-    #         'last_layer_optimizer_state_dict': last_layer_optimizer.state_dict(),
-    #         'warm_optimizer_state_dict' : warm_optimizer.state_dict()
-    #         }, os.path.join(model_dir, (str(epoch) + 'nopush' + '{0:.4f}.pth').format(accu)))
+        if epoch < warm_epochs:
+            tnt.warm_only(model=modelmulti)
+            tnt.train(model=modelmulti, dataloader=train_loader, optimizer=warm_optimizer, coefs=coefs)
+        else:
+            tnt.joint(model=modelmulti)
+            tnt.train(model=modelmulti, dataloader=train_loader, optimizer=joint_optimizer, coefs=coefs)
+            joint_lr_scheduler.step()
+        model.eval()
+        modelmulti.eval()
+        accu = tnt.test(model=modelmulti, dataloader=test_loader)
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'joint_optimizer_state_dict': joint_optimizer.state_dict(),
+            'joint_lr_scheduler_state_dict': joint_lr_scheduler.state_dict(),
+            'last_layer_optimizer_state_dict': last_layer_optimizer.state_dict(),
+            'warm_optimizer_state_dict' : warm_optimizer.state_dict()
+            }, os.path.join(model_dir, (str(epoch) + 'nopush' + '{0:.4f}.pth').format(accu)))
 
-        if True:# epoch >= push_start and epoch in push_epochs:
-            push_prototypes(
-                train_push_loader, # pytorch dataloader unnorm
-                prototype_network_parallel=modelmulti,
-                preprocess_input_function = preprocess, # norma?
+        if epoch >= push_start and epoch in push_epochs:
+            push.push_prototypes(
+                train_push_loader, # pytorch dataloader (must be unnormalized in [0,1])
+                prototype_network_parallel=ppnet_multi, # pytorch network with prototype_vectors
+                class_specific=class_specific,
+                preprocess_input_function=preprocess_input_function, # normalize if needed
                 prototype_layer_stride=1,
-                root_dir_for_saving_prototypes = model_dir + '/img/',
-                epoch_number = 10, #epoch, # if not provided, prototypes saved previously will be overwritten
-                prototype_img_filename_prefix = 'prototype-img',
-                prototype_self_act_filename_prefix = 'prototype-self-act',
-                proto_bound_boxes_filename_prefix = 'bb',
+                root_dir_for_saving_prototypes=img_dir, # if not None, prototypes will be saved here
+                epoch_number=epoch, # if not provided, prototypes saved previously will be overwritten
+                prototype_img_filename_prefix=prototype_img_filename_prefix,
+                prototype_self_act_filename_prefix=prototype_self_act_filename_prefix,
+                proto_bound_boxes_filename_prefix=proto_bound_boxes_filename_prefix,
                 save_prototype_class_identity=True)
-            # last_only(model=modelmulti)
-            # for i in range(100):
-            #     log('iteration: \t{0}'.format(i), "trainlog.txt")
-            #     _ = train(model=modelmulti, dataloader=train_loader, optimizer=last_layer_optimizer, coefs=coefs)
-            #     accu = test(model=modelmulti, dataloader=test_loader)
-            #     torch.save({
-            #         'epoch': epoch,
-            #         'model_state_dict': model.state_dict(),
-            #         'joint_optimizer_state_dict': joint_optimizer.state_dict(),
-            #         'joint_lr_scheduler_state_dict': joint_lr_scheduler.state_dict(),
-            #         'last_layer_optimizer_state_dict': last_layer_optimizer.state_dict(),
-            #         'warm_optimizer_state_dict' : warm_optimizer.state_dict()
-            #         }, os.path.join(model_dir, (str(epoch) + 'push' + '{0:.4f}.pth').format(accu)))
+            tnt.last_only(model=modelmulti)
+            for i in range(100):
+                log('iteration: \t{0}'.format(i), "trainlog.txt")
+                _ = tnt.train(model=modelmulti, dataloader=train_loader, optimizer=last_layer_optimizer, coefs=coefs)
+                accu = tnt.test(model=modelmulti, dataloader=test_loader)
+                torch.save({
+                    'epoch': epoch,
+                    'model_state_dict': model.state_dict(),
+                    'joint_optimizer_state_dict': joint_optimizer.state_dict(),
+                    'joint_lr_scheduler_state_dict': joint_lr_scheduler.state_dict(),
+                    'last_layer_optimizer_state_dict': last_layer_optimizer.state_dict(),
+                    'warm_optimizer_state_dict' : warm_optimizer.state_dict()
+                    }, os.path.join(model_dir, (str(epoch) + 'push' + '{0:.4f}.pth').format(accu)))
