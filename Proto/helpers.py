@@ -6,7 +6,7 @@ def makedir(path):
     if not os.path.exists(path):
         os.makedirs(path)
 
-def log(line, file): #Hvad er det her, Kasper?? Hvad bruges den til og hvor kommer den fra?
+def log(line, file): # Self made
   with open(path + file, 'a+') as log:
       content = log.read()
       log.write(content + line + str("\n"))
