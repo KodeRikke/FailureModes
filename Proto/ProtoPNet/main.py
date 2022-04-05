@@ -19,19 +19,17 @@ import save
 from log import create_logger
 from preprocess import mean, std, preprocess_input_function
 
-parser = argparse.ArgumentParser()
-parser.add_argument('-gpuid', nargs=1, type=str, default='0') # python3 main.py -gpuid=0,1,2,3
-args = parser.parse_args()
 os.environ['CUDA_VISIBLE_DEVICES'] = args.gpuid[0]
 print(os.environ['CUDA_VISIBLE_DEVICES'])
 
 # book keeping namings and code
 from settings import base_architecture, img_size, prototype_shape, num_classes, \
-                     prototype_activation_function, add_on_layers_type, experiment_run
+                     prototype_activation_function, add_on_layers_type, experiment_run, \
+                     path
 
 base_architecture_type = re.match('^[a-z]*', base_architecture).group(0)
 
-model_dir = './saved_models/' + base_architecture + '/' + experiment_run + '/'
+model_dir = path + '/saved_models/' + base_architecture + '/' + experiment_run + '/'
 makedir(model_dir)
 shutil.copy(src=os.path.join(os.getcwd(), __file__), dst=model_dir)
 shutil.copy(src=os.path.join(os.getcwd(), 'settings.py'), dst=model_dir)
@@ -39,7 +37,6 @@ shutil.copy(src=os.path.join(os.getcwd(), base_architecture_type + '_features.py
 shutil.copy(src=os.path.join(os.getcwd(), 'model.py'), dst=model_dir)
 shutil.copy(src=os.path.join(os.getcwd(), 'train_and_test.py'), dst=model_dir)
 
-log, logclose = create_logger(log_filename=os.path.join(model_dir, 'train.log'))
 img_dir = os.path.join(model_dir, 'img')
 makedir(img_dir)
 weight_matrix_filename = 'outputL_weights'
@@ -187,3 +184,54 @@ for epoch in range(num_train_epochs):
    
 logclose()
 
+def fit(model, modelmulti, epochs, warm_epochs, epoch_reached):
+    # log('start training', "trainlog.txt")
+    # for epoch in range(epoch_reached, epochs):
+    #     model.train()
+    #     modelmulti.train()
+    #     log('epoch: \t{0}'.format(epoch), "trainlog.txt")
+        
+    #     if epoch < warm_epochs:
+    #         warm_only(model=modelmulti)
+    #         train(model=modelmulti, dataloader=train_loader, optimizer=warm_optimizer, coefs=coefs)
+    #     else:
+    #         joint(model=modelmulti)
+    #         train(model=modelmulti, dataloader=train_loader, optimizer=joint_optimizer, coefs=coefs)
+    #         joint_lr_scheduler.step()
+    #     model.eval()
+    #     modelmulti.eval()
+    #     accu = test(model=modelmulti, dataloader=test_loader)
+    #     torch.save({
+    #         'epoch': epoch,
+    #         'model_state_dict': model.state_dict(),
+    #         'joint_optimizer_state_dict': joint_optimizer.state_dict(),
+    #         'joint_lr_scheduler_state_dict': joint_lr_scheduler.state_dict(),
+    #         'last_layer_optimizer_state_dict': last_layer_optimizer.state_dict(),
+    #         'warm_optimizer_state_dict' : warm_optimizer.state_dict()
+    #         }, os.path.join(model_dir, (str(epoch) + 'nopush' + '{0:.4f}.pth').format(accu)))
+
+        if True:# epoch >= push_start and epoch in push_epochs:
+            push_prototypes(
+                train_push_loader, # pytorch dataloader unnorm
+                prototype_network_parallel=modelmulti,
+                preprocess_input_function = preprocess, # norma?
+                prototype_layer_stride=1,
+                root_dir_for_saving_prototypes = model_dir + '/img/',
+                epoch_number = 10, #epoch, # if not provided, prototypes saved previously will be overwritten
+                prototype_img_filename_prefix = 'prototype-img',
+                prototype_self_act_filename_prefix = 'prototype-self-act',
+                proto_bound_boxes_filename_prefix = 'bb',
+                save_prototype_class_identity=True)
+            # last_only(model=modelmulti)
+            # for i in range(100):
+            #     log('iteration: \t{0}'.format(i), "trainlog.txt")
+            #     _ = train(model=modelmulti, dataloader=train_loader, optimizer=last_layer_optimizer, coefs=coefs)
+            #     accu = test(model=modelmulti, dataloader=test_loader)
+            #     torch.save({
+            #         'epoch': epoch,
+            #         'model_state_dict': model.state_dict(),
+            #         'joint_optimizer_state_dict': joint_optimizer.state_dict(),
+            #         'joint_lr_scheduler_state_dict': joint_lr_scheduler.state_dict(),
+            #         'last_layer_optimizer_state_dict': last_layer_optimizer.state_dict(),
+            #         'warm_optimizer_state_dict' : warm_optimizer.state_dict()
+            #         }, os.path.join(model_dir, (str(epoch) + 'push' + '{0:.4f}.pth').format(accu)))

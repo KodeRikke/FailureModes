@@ -1,4 +1,5 @@
 import os
+from settings import path
 
 def log(line, file):
   with open(path + file, 'a+') as log:
