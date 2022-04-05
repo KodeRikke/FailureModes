@@ -94,38 +94,6 @@ class PPNet(nn.Module):
         logits = self.last_layer(prototype_activations)
         return logits, min_distances
     
-    # From IAIABL project
-        """
-    def forward(self, x):
-            # x is of dimension (batch, 4, spatial, spatial)
-        x = x[:, 0:3, :, :]  #(no view; create slice. When no fa is available this will return x)
-        distances = self.prototype_distances(x)
-        '''
-        we cannot refactor the lines below for similarity scores
-        because we need to return min_distances
-        '''
-        
-        _distances = distances.view(distances.shape[0], distances.shape[1], -1)
-        top_k_neg_distances, _ = torch.topk(-_distances, self.topk_k)
-        closest_k_distances = - top_k_neg_distances
-        min_distances = F.avg_pool1d(closest_k_distances, kernel_size=closest_k_distances.shape[2]).view(-1, self.num_prototypes)
-
-        prototype_activations = self.distance_2_similarity(distances)
-        _activations = prototype_activations.view(prototype_activations.shape[0], prototype_activations.shape[1], -1)
-        top_k_activations, _ = torch.topk(_activations, self.topk_k)
-        prototype_activations = F.avg_pool1d(top_k_activations, kernel_size=top_k_activations.shape[2]).view(-1, self.num_prototypes) 
-        
-        logits = self.last_layer(prototype_activations)
-
-        if not self.class_specific:
-            logits[:,0] = 0
-
-        activation = self.distance_2_similarity(distances)
-        upsampled_activation = torch.nn.Upsample(size=(x.shape[2], x.shape[3]), mode='bilinear', align_corners=False)(activation)
-        
-        return logits, min_distances, upsampled_activation
-        """
-
     def push_forward(self, x):
         conv_output = self.conv_features(x)
         distances = self._l2_convolution(conv_output)
@@ -142,42 +110,6 @@ class PPNet(nn.Module):
         self.ones = nn.Parameter(self.ones.data[prototypes_to_keep, ...], requires_grad=False)
         self.prototype_class_identity = self.prototype_class_identity[prototypes_to_keep,:]
 
-        """
-    def __repr__(self):
-            # PPNet(self, features, img_size, prototype_shape,
-        # proto_layer_rf_info, num_classes, init_weights=True):
-        rep = (
-            'PPNet(\n'
-            '\tfeatures: {},\n'
-            '\timg_size: {},\n'
-            '\tprototype_shape: {},\n'
-            '\tproto_layer_rf_info: {},\n'
-            '\tnum_classes: {},\n'
-            '\tepsilon: {}\n'
-            ')'
-        )
-
-        return rep.format(self.features,
-                          self.img_size,
-                          self.prototype_shape,
-                          self.proto_layer_rf_info,
-                          self.num_classes,
-                          self.epsilon)
-
-    def set_last_layer_incorrect_connection(self, incorrect_strength):
-        '''
-        the incorrect strength will be actual strength if -0.5 then input -0.5
-        '''
-        positive_one_weights_locations = torch.t(self.prototype_class_identity)
-        negative_one_weights_locations = 1 - positive_one_weights_locations
-
-        correct_class_connection = 1
-        incorrect_class_connection = incorrect_strength
-        self.last_layer.weight.data.copy_(
-            correct_class_connection * positive_one_weights_locations
-            + incorrect_class_connection * negative_one_weights_locations)
-
-        """
     def _initialize_weights(self):
         for m in self.add_on_layers.modules():
             if isinstance(m, nn.Conv2d):
@@ -189,25 +121,3 @@ class PPNet(nn.Module):
             elif isinstance(m, nn.BatchNorm2d):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
-                
-        """
-    def construct_PPNet(base_architecture, pretrained=True, img_size=224,
-                    prototype_shape=(2000, 512, 1, 1), num_classes=200,
-                    prototype_activation_function='log',
-                    add_on_layers_type='bottleneck'):
-    features = base_architecture_to_features[base_architecture](pretrained=pretrained)
-    layer_filter_sizes, layer_strides, layer_paddings = features.conv_info()
-    proto_layer_rf_info = compute_proto_layer_rf_info_v2(img_size=img_size,
-                                                         layer_filter_sizes=layer_filter_sizes,
-                                                         layer_strides=layer_strides,
-                                                         layer_paddings=layer_paddings,
-                                                         prototype_kernel_size=prototype_shape[2])
-    return PPNet(features=features,
-                 img_size=img_size,
-                 prototype_shape=prototype_shape,
-                 proto_layer_rf_info=proto_layer_rf_info,
-                 num_classes=num_classes,
-                 init_weights=True,
-                 prototype_activation_function=prototype_activation_function,
-                 add_on_layers_type=add_on_layers_type)
-        """
