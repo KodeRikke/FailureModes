@@ -1,0 +1,4 @@
+start training
+epoch: 	0
+start training
+epoch: 	0

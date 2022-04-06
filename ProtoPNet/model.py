@@ -283,12 +283,11 @@ class PPNet(nn.Module):
 
         self.set_last_layer_incorrect_connection(incorrect_strength=-0.5)
 
-
-
-def construct_PPNet(base_architecture, pretrained=True, img_size=224,
+def initialize_model(base_architecture, pretrained=True, img_size=224,
                     prototype_shape=(2000, 512, 1, 1), num_classes=200,
                     prototype_activation_function='log',
-                    add_on_layers_type='bottleneck'):
+                    add_on_layers_type='bottleneck',
+                    model_name=""):
     features = base_architecture_to_features[base_architecture](pretrained=pretrained)
     layer_filter_sizes, layer_strides, layer_paddings = features.conv_info()
     proto_layer_rf_info = compute_proto_layer_rf_info_v2(img_size=img_size,
@@ -296,12 +295,19 @@ def construct_PPNet(base_architecture, pretrained=True, img_size=224,
                                                          layer_strides=layer_strides,
                                                          layer_paddings=layer_paddings,
                                                          prototype_kernel_size=prototype_shape[2])
-    return PPNet(features=features,
-                 img_size=img_size,
-                 prototype_shape=prototype_shape,
-                 proto_layer_rf_info=proto_layer_rf_info,
-                 num_classes=num_classes,
-                 init_weights=True,
-                 prototype_activation_function=prototype_activation_function,
-                 add_on_layers_type=add_on_layers_type)
+    ppnet = PPNet(features=features,
+                  img_size=img_size,
+                  prototype_shape=prototype_shape,
+                  proto_layer_rf_info=proto_layer_rf_info,
+                  num_classes=num_classes,
+                  init_weights=True,
+                  prototype_activation_function=prototype_activation_function,
+                  add_on_layers_type=add_on_layers_type)
 
+    if model_name != "":
+        checkpoint = torch.load(model_name)
+        ppnet.load_state_dict(checkpoint['model_state_dict'])
+
+    ppnet = ppnet.cuda()
+    ppnet_multi = torch.nn.DataParallel(ppnet)
+    return ppnet, ppnet_multi

@@ -15,11 +15,8 @@ import model
 import push
 import prune
 import train_and_test as tnt
-import save
 from log import log
 from preprocess import mean, std, preprocess_input_function
-
-print(os.environ['CUDA_VISIBLE_DEVICES'])
 
 # book keeping namings and code
 from settings import base_architecture, img_size, prototype_shape, num_classes, \
@@ -83,46 +80,6 @@ test_loader = torch.utils.data.DataLoader(
     test_dataset, batch_size=test_batch_size, shuffle=False,
     num_workers=4, pin_memory=True)
 
-# construct the model
-ppnet = model.construct_PPNet(base_architecture=base_architecture,
-                              pretrained=True, img_size=img_size,
-                              prototype_shape=prototype_shape,
-                              num_classes=num_classes,
-                              prototype_activation_function=prototype_activation_function,
-                              add_on_layers_type=add_on_layers_type)
-#if prototype_activation_function == 'linear':
-#    ppnet.set_last_layer_incorrect_connection(incorrect_strength=0)
-ppnet = ppnet.cuda()
-ppnet_multi = torch.nn.DataParallel(ppnet)
-class_specific = True
-
-# define optimizer
-from settings import joint_optimizer_lrs, joint_lr_step_size
-joint_optimizer_specs = \
-[{'params': ppnet.features.parameters(), 'lr': joint_optimizer_lrs['features'], 'weight_decay': 1e-3}, # bias are now also being regularized
- {'params': ppnet.add_on_layers.parameters(), 'lr': joint_optimizer_lrs['add_on_layers'], 'weight_decay': 1e-3},
- {'params': ppnet.prototype_vectors, 'lr': joint_optimizer_lrs['prototype_vectors']},
-]
-joint_optimizer = torch.optim.Adam(joint_optimizer_specs)
-joint_lr_scheduler = torch.optim.lr_scheduler.StepLR(joint_optimizer, step_size=joint_lr_step_size, gamma=0.1)
-
-from settings import warm_optimizer_lrs
-warm_optimizer_specs = \
-[{'params': ppnet.add_on_layers.parameters(), 'lr': warm_optimizer_lrs['add_on_layers'], 'weight_decay': 1e-3},
- {'params': ppnet.prototype_vectors, 'lr': warm_optimizer_lrs['prototype_vectors']},
-]
-warm_optimizer = torch.optim.Adam(warm_optimizer_specs)
-
-from settings import last_layer_optimizer_lr
-last_layer_optimizer_specs = [{'params': ppnet.last_layer.parameters(), 'lr': last_layer_optimizer_lr}]
-last_layer_optimizer = torch.optim.Adam(last_layer_optimizer_specs)
-
-# weighting of different training losses
-from settings import coefs
-
-# number of training epochs, number of warm epochs, push start epoch, push epochs
-from settings import num_train_epochs, num_warm_epochs, push_start, push_epochs
-
 # train the model
 def fit(model, modelmulti, epochs, warm_epochs, epoch_reached):
     log('start training', "trainlog.txt")
@@ -176,3 +133,59 @@ def fit(model, modelmulti, epochs, warm_epochs, epoch_reached):
                     'last_layer_optimizer_state_dict': last_layer_optimizer.state_dict(),
                     'warm_optimizer_state_dict' : warm_optimizer.state_dict()
                     }, os.path.join(model_dir, (str(epoch) + 'push' + '{0:.4f}.pth').format(accu)))
+
+# construct the model
+model_name = ""
+if model_name != "":
+    model_name = model_dir + model_name
+    checkpoint = torch.load(model_name)
+
+ppnet, ppnet_multi = model.initialize_model(base_architecture=base_architecture,
+                                            pretrained=True, img_size=img_size,
+                                            prototype_shape=prototype_shape,
+                                            num_classes=num_classes,
+                                            prototype_activation_function=prototype_activation_function,
+                                            add_on_layers_type=add_on_layers_type,
+                                            model_name=model_name)
+#if prototype_activation_function == 'linear':
+#    ppnet.set_last_layer_incorrect_connection(incorrect_strength=0)
+
+class_specific = True
+
+# define optimizer
+from settings import joint_optimizer_lrs, joint_lr_step_size
+joint_optimizer_specs = \
+[{'params': ppnet.features.parameters(), 'lr': joint_optimizer_lrs['features'], 'weight_decay': 1e-3}, # bias are now also being regularized
+ {'params': ppnet.add_on_layers.parameters(), 'lr': joint_optimizer_lrs['add_on_layers'], 'weight_decay': 1e-3},
+ {'params': ppnet.prototype_vectors, 'lr': joint_optimizer_lrs['prototype_vectors']},
+]
+joint_optimizer = torch.optim.Adam(joint_optimizer_specs)
+joint_lr_scheduler = torch.optim.lr_scheduler.StepLR(joint_optimizer, step_size=joint_lr_step_size, gamma=0.1)
+
+from settings import warm_optimizer_lrs
+warm_optimizer_specs = \
+[{'params': ppnet.add_on_layers.parameters(), 'lr': warm_optimizer_lrs['add_on_layers'], 'weight_decay': 1e-3},
+ {'params': ppnet.prototype_vectors, 'lr': warm_optimizer_lrs['prototype_vectors']},
+]
+warm_optimizer = torch.optim.Adam(warm_optimizer_specs)
+
+from settings import last_layer_optimizer_lr
+last_layer_optimizer_specs = [{'params': ppnet.last_layer.parameters(), 'lr': last_layer_optimizer_lr}]
+last_layer_optimizer = torch.optim.Adam(last_layer_optimizer_specs)
+
+# weighting of different training losses
+from settings import coefs
+
+# number of training epochs, number of warm epochs, push start epoch, push epochs
+from settings import epochs, epoch_reached, warm_epochs, push_start, push_epochs
+
+# torch.backends.cudnn.benchmark = True
+
+if model_name != "":
+    epoch_reached = checkpoint['epoch'] + 1 # next epoch
+    joint_optimizer.load_state_dict(checkpoint['joint_optimizer_state_dict'])
+    joint_lr_scheduler.load_state_dict(checkpoint['joint_lr_scheduler_state_dict'])
+    last_layer_optimizer.load_state_dict(checkpoint['last_layer_optimizer_state_dict'])
+    warm_optimizer.load_state_dict(checkpoint['warm_optimizer_state_dict'])
+
+fit(ppnet, ppnet_multi, epochs = epochs, warm_epochs = warm_epochs, epoch_reached = epoch_reached)
