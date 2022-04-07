@@ -132,7 +132,7 @@ def fit(model, modelmulti, epochs, warm_epochs, epoch_reached):
                     'joint_lr_scheduler_state_dict': joint_lr_scheduler.state_dict(),
                     'last_layer_optimizer_state_dict': last_layer_optimizer.state_dict(),
                     'warm_optimizer_state_dict' : warm_optimizer.state_dict()
-                    }, os.path.join(model_dir, (str(epoch) + 'push' + '{0:.4f}.pth').format(accu)))
+                    }, os.path.join(model_dir, (str(epoch) + '_' + str(i) + 'push' + '{0:.4f}.pth').format(accu)))
 
 # construct the model
 model_name = ""
