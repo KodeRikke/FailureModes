@@ -554,17 +554,10 @@ def update_prototypes_on_batch(search_batch_input,
                                proto_img_j, vmin=0.0, vmax=1.0)            
     del class_to_img_index_dict
 
-# resnet
-model_urls = {
-    'resnet34': 'https://download.pytorch.org/models/resnet34-333f7ec4.pth',
-    'vgg16': 'https://download.pytorch.org/models/vgg16-397923af.pth',
-    'densenet121': 'https://download.pytorch.org/models/densenet121-a639ec97.pth'
-}
-
-cfg = {'A': [64, 'M', 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
-       'B': [64, 64, 'M', 128, 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
-       'D': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M'],
-       'E': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],}
+# pretrained models
+model_urls = {'resnet34': 'https://download.pytorch.org/models/resnet34-333f7ec4.pth',
+              'vgg16': 'https://download.pytorch.org/models/vgg16-397923af.pth',
+              'densenet121': 'https://download.pytorch.org/models/densenet121-a639ec97.pth'}
 
 def conv3x3(in_planes, out_planes, stride=1):
     """3x3 convolution with padding"""
@@ -696,7 +689,7 @@ class VGG_features(nn.Module):
         template = 'VGG{}, batch_norm={}'
         return template.format(self.num_layers() + 3,
                                self.batch_norm)
-
+    
 class ResNet_features(nn.Module):
     '''
     the convolutional layers of ResNet
@@ -794,6 +787,151 @@ class ResNet_features(nn.Module):
               + self.block.num_layers * self.layers[3]
               + 1)
 
+class _DenseLayer(nn.Sequential):
+
+    num_layers = 2
+
+    def __init__(self, num_input_features, growth_rate, bn_size, drop_rate):
+        super(_DenseLayer, self).__init__()
+        self.add_module('norm1', nn.BatchNorm2d(num_input_features)),
+        self.add_module('relu1', nn.ReLU(inplace=True)),
+        self.add_module('conv1', nn.Conv2d(num_input_features, bn_size *
+                        growth_rate, kernel_size=1, stride=1, bias=False)),
+        self.add_module('norm2', nn.BatchNorm2d(bn_size * growth_rate)),
+        self.add_module('relu2', nn.ReLU(inplace=True)),
+        self.add_module('conv2', nn.Conv2d(bn_size * growth_rate, growth_rate,
+                        kernel_size=3, stride=1, padding=1, bias=False)),
+        self.drop_rate = drop_rate
+
+    def forward(self, x):
+        new_features = super(_DenseLayer, self).forward(x)
+        if self.drop_rate > 0:
+            new_features = F.dropout(new_features, p=self.drop_rate, training=self.training)
+
+        # channelwise concatenation
+        return torch.cat([x, new_features], 1)
+
+    def layer_conv_info(self):
+        layer_kernel_sizes = [1, 3]
+        layer_strides = [1, 1]
+        layer_paddings = [0, 1]
+
+        return layer_kernel_sizes, layer_strides, layer_paddings
+
+
+class _DenseBlock(nn.Sequential):
+    def __init__(self, num_layers, num_input_features, bn_size, growth_rate, drop_rate):
+        super(_DenseBlock, self).__init__()
+        self.block_kernel_sizes = []
+        self.block_strides = []
+        self.block_paddings = []
+
+        for i in range(num_layers):
+            layer = _DenseLayer(num_input_features + i * growth_rate, growth_rate, bn_size, drop_rate)
+            layer_kernel_sizes, layer_strides, layer_paddings = layer.layer_conv_info()
+            self.block_kernel_sizes.extend(layer_kernel_sizes)
+            self.block_strides.extend(layer_strides)
+            self.block_paddings.extend(layer_paddings)
+            self.add_module('denselayer%d' % (i + 1), layer)
+
+        self.num_layers = _DenseLayer.num_layers * num_layers
+
+    def block_conv_info(self):
+        return self.block_kernel_sizes, self.block_strides, self.block_paddings
+
+
+class _Transition(nn.Sequential):
+
+    num_layers = 1
+
+    def __init__(self, num_input_features, num_output_features):
+        super(_Transition, self).__init__()
+        self.add_module('norm', nn.BatchNorm2d(num_input_features))
+        self.add_module('relu', nn.ReLU(inplace=True))
+        self.add_module('conv', nn.Conv2d(num_input_features, num_output_features,
+                                          kernel_size=1, stride=1, bias=False))
+        self.add_module('pool', nn.AvgPool2d(kernel_size=2, stride=2)) # AvgPool2d has no padding
+
+    def block_conv_info(self):
+        return [1, 2], [1, 2], [0, 0]
+
+class DenseNet_features(nn.Module):
+    def __init__(self, growth_rate=32, block_config=(6, 12, 24, 16),
+                 num_init_features=64, bn_size=4, drop_rate=0, num_classes=1000):
+
+        super(DenseNet_features, self).__init__()
+        self.kernel_sizes = []
+        self.strides = []
+        self.paddings = []
+
+        self.n_layers = 0
+
+        # First convolution
+        self.features = nn.Sequential(OrderedDict([
+            ('conv0', nn.Conv2d(in_channels=3, out_channels=num_init_features, kernel_size=7, stride=2, padding=3, bias=False)),
+            ('norm0', nn.BatchNorm2d(num_init_features)),
+            ('relu0', nn.ReLU(inplace=True)),
+            ('pool0', nn.MaxPool2d(kernel_size=3, stride=2, padding=1)),
+        ]))
+
+        self.kernel_sizes.extend([7, 3])
+        self.strides.extend([2, 2])
+        self.paddings.extend([3, 1])
+
+        # Each denseblock
+        num_features = num_init_features
+        for i, num_layers in enumerate(block_config):
+            block = _DenseBlock(num_layers=num_layers, num_input_features=num_features,
+                                bn_size=bn_size, growth_rate=growth_rate, drop_rate=drop_rate)
+            self.n_layers += block.num_layers
+
+            block_kernel_sizes, block_strides, block_paddings = block.block_conv_info()
+            self.kernel_sizes.extend(block_kernel_sizes)
+            self.strides.extend(block_strides)
+            self.paddings.extend(block_paddings)
+
+            self.features.add_module('denseblock%d' % (i + 1), block)
+            num_features = num_features + num_layers * growth_rate
+            if i != len(block_config) - 1:
+                trans = _Transition(num_input_features=num_features, num_output_features=num_features // 2)
+
+                self.n_layers += trans.num_layers
+
+                block_kernel_sizes, block_strides, block_paddings = trans.block_conv_info()
+                self.kernel_sizes.extend(block_kernel_sizes)
+                self.strides.extend(block_strides)
+                self.paddings.extend(block_paddings)
+
+                self.features.add_module('transition%d' % (i + 1), trans)
+                num_features = num_features // 2
+
+        # Final batch norm
+        self.features.add_module('norm5', nn.BatchNorm2d(num_features))
+        self.features.add_module('final_relu', nn.ReLU(inplace=True))
+
+        # Official init from torch repo.
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.constant_(m.bias, 0)
+
+    def forward(self, x):
+        return self.features(x)
+
+    def conv_info(self):
+        return self.kernel_sizes, self.strides, self.paddings
+
+    def num_layers(self):
+        return self.n_layers
+
+    def __repr__(self):
+        template = 'densenet{}_features'
+        return template.format((self.num_layers() + 2))
+    
 def resnet34_features(pretrained=False, **kwargs):
     """Constructs a ResNet-34 model.
     Args:
@@ -815,7 +953,7 @@ def vgg19_features(pretrained=False, **kwargs):
     """
     if pretrained:
         kwargs['init_weights'] = False
-    model = VGG_features(cfg['E'], batch_norm=False, **kwargs)
+    model = VGG_features([64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'], batch_norm=False, **kwargs)
     if pretrained:
         my_dict = model_zoo.load_url(model_urls['vgg19'], model_dir=model_dir)
         keys_to_remove = set()
@@ -827,8 +965,45 @@ def vgg19_features(pretrained=False, **kwargs):
         model.load_state_dict(my_dict, strict=False)
     return model
 
+def densenet121_features(pretrained=False, **kwargs):
+    r"""Densenet-121 model from
+    `"Densely Connected Convolutional Networks" <https://arxiv.org/pdf/1608.06993.pdf>`_
+
+    Args:
+        pretrained (bool): If True, returns a model pre-trained on ImageNet
+    """
+    model = DenseNet_features(num_init_features=64, growth_rate=32, block_config=(6, 12, 24, 16),
+                     **kwargs)
+    if pretrained:
+        # '.'s are no longer allowed in module names, but pervious _DenseLayer
+        # has keys 'norm.1', 'relu.1', 'conv.1', 'norm.2', 'relu.2', 'conv.2'.
+        # They are also in the checkpoints in model_urls. This pattern is used
+        # to find such keys.
+        pattern = re.compile(
+            r'^(.*denselayer\d+\.(?:norm|relu|conv))\.((?:[12])\.(?:weight|bias|running_mean|running_var))$')
+        state_dict = model_zoo.load_url(model_urls['densenet121'], model_dir=model_dir)
+        for key in list(state_dict.keys()):
+            '''
+            example
+            key 'features.denseblock4.denselayer24.norm.2.running_var'
+            res.group(1) 'features.denseblock4.denselayer24.norm'
+            res.group(2) '2.running_var'
+            new_key 'features.denseblock4.denselayer24.norm2.running_var'
+            '''
+            res = pattern.match(key)
+            if res:
+                new_key = res.group(1) + res.group(2)
+                state_dict[new_key] = state_dict[key]
+                del state_dict[key]
+
+        del state_dict['classifier.weight']
+        del state_dict['classifier.bias']
+        model.load_state_dict(state_dict)
+    return model
+
 base_architecture_to_features = {'resnet34': resnet34_features,
-                                 'vgg19': vgg19_features}
+                                 'vgg19': vgg19_features,
+                                 'densenet121': densenet121_features}
 
 # model fugle
 class PPNet(nn.Module):
@@ -1105,7 +1280,7 @@ def joint(model):
         p.requires_grad = True
     log('\tjoint', trainlog)
 
-def fit(model, modelmulti, epochs, warm_epochs, epoch_reached, last_layer_iterations):
+def fit(model, modelmulti, save_name, epochs, warm_epochs, epoch_reached, last_layer_iterations):
     log('start training', trainlog)
     for epoch in range(epoch_reached, epochs):
         model.train()
@@ -1129,7 +1304,7 @@ def fit(model, modelmulti, epochs, warm_epochs, epoch_reached, last_layer_iterat
             'joint_lr_scheduler_state_dict': joint_lr_scheduler.state_dict(),
             'last_layer_optimizer_state_dict': last_layer_optimizer.state_dict(),
             'warm_optimizer_state_dict' : warm_optimizer.state_dict()
-            }, os.path.join(model_dir, (str(epoch) + 'nopush' + '{0:.4f}.pth').format(accu)))
+            }, os.path.join(model_dir, (save_name + str(epoch) + 'nopush' + '{0:.4f}.pth').format(accu)))
 
         if epoch >= push_start and epoch in push_epochs:
             push_prototypes(
@@ -1161,6 +1336,12 @@ def fit(model, modelmulti, epochs, warm_epochs, epoch_reached, last_layer_iterat
 #                                                                settings                                                     #
 ###############################################################################################################################
 
+# number of experiments
+num_experiments = 2
+
+# reproducibility
+seeds = [1337]# * num_experiments
+
 # training
 epochs = 10
 warm_epochs = 5
@@ -1179,94 +1360,106 @@ train_push_batch_size = 75
 
 # prototypes
 img_size = 224
-prototype_shape = (1000, 256, 1, 1)
+prototype_shape = (1000, 128, 1, 1) # 256 for resnet34 and 128 for densenet121, vgg19
 num_classes = 100
 
 # model
 model_name = ""
-base_architecture = "resnet34"
+save_name = ""
+base_architectures = ["densenet121"] * num_experiments
 
 # log names
-trainlog = "trainlog.txt"
-analysislog = "analysislog.txt"
-pushlog = "pushlog.txt"
 
-# reproducibility
-seed = 1337
 
 ###########################################################################################################################
 #                                                                                                                         #
 ###########################################################################################################################
 
+if len(base_architectures) != len(seeds):
+    raise Exception("base_architectures and seeds must be of equal length!")
+
 # cuda
 cuda = torch.device('cuda') if torch.cuda.is_available() else "cpu"
 print("Using : ", cuda)
 
-# reproducibility
-g = seed(seed)
-
-# sets
-train_dataset = datasets.ImageFolder(
-        path + 'datasets/cub200_cropped/train_cropped_augmented/', 
-        transforms.Compose([transforms.Resize(size=(img_size, img_size)), transforms.ToTensor(), 
-                            transforms.Normalize(mean = (0.485, 0.456, 0.406), std = (0.229, 0.224, 0.225))]))
-train_push_dataset = datasets.ImageFolder(
-        path + 'datasets/cub200_cropped/train_cropped/',
-        transforms.Compose([transforms.Resize(size=(img_size, img_size)),transforms.ToTensor()]))
-test_dataset = datasets.ImageFolder(
-        path + 'datasets/cub200_cropped/test_cropped/',
-        transforms.Compose([transforms.Resize(size=(img_size, img_size)),transforms.ToTensor(),
-                            transforms.Normalize(mean = (0.485, 0.456, 0.406), std = (0.229, 0.224, 0.225)),]))
-
-# dataloaders
-train_loader = torch.utils.data.DataLoader(train_dataset, 
-                                           batch_size=train_batch_size, 
-                                           shuffle=True, 
-                                           num_workers=4, 
-                                           pin_memory=True,
-                                           worker_init_fn=seed_worker,
-                                           generator=g,)
-
-train_push_loader = torch.utils.data.DataLoader(train_push_dataset, 
-                                                batch_size=train_push_batch_size, 
-                                                shuffle=False, 
-                                                num_workers=4, 
-                                                pin_memory=True,
-                                                worker_init_fn=seed_worker,
-                                                generator=g)
-
-test_loader = torch.utils.data.DataLoader(test_dataset, 
-                                          batch_size=test_batch_size, 
-                                          shuffle=False, 
-                                          num_workers=4, 
-                                          pin_memory=True,
-                                          worker_init_fn=seed_worker,
-                                          generator=g)
-
-# initialize model
-if model_name != "":
-    checkpoint = torch.load(model_dir + model_name)
-ppnet, ppnet_multi = initialize_model(base_architecture, prototype_shape, num_classes, model_name = model_name)
-
-torch.backends.cudnn.benchmark = True
-
-# optimizers 
-joint_optimizer = torch.optim.Adam([{'params': ppnet.features.parameters(), 'lr': 1e-4, 'weight_decay': 1e-3}, 
-                                        {'params': ppnet.add_on_layers.parameters(), 'lr': 3e-3, 'weight_decay': 1e-3},
-                                        {'params': ppnet.prototype_vectors, 'lr': 3e-3},])
-joint_lr_scheduler = torch.optim.lr_scheduler.StepLR(joint_optimizer, step_size = 5, gamma=0.1)
-last_layer_optimizer = torch.optim.Adam([{'params': ppnet.last_layer.parameters(), 'lr': 1e-4}])
-warm_optimizer = torch.optim.Adam([{'params': ppnet.add_on_layers.parameters(), 'lr': 3e-3, 'weight_decay': 1e-3},
-                                {'params': ppnet.prototype_vectors, 'lr': 3e-3},])
-
-# load model
-if model_name != "":
-    epoch_reached = checkpoint['epoch'] + 1 # next epoch
-    joint_optimizer.load_state_dict(checkpoint['joint_optimizer_state_dict'])
-    joint_lr_scheduler.load_state_dict(checkpoint['joint_lr_scheduler_state_dict'])
-    last_layer_optimizer.load_state_dict(checkpoint['last_layer_optimizer_state_dict'])
-    warm_optimizer.load_state_dict(checkpoint['warm_optimizer_state_dict'])
+for seed, base_architecture, in zip(seeds, base_architectures):
+    # log names
+    trainlog = "trainlog" + seed + base_architecture + ".txt"
+    analysislog = "analysislog" + seed + base_architecture + ".txt"
+    pushlog = "pushlog" + seed + base_architecture + ".txt"
     
+    # reproducibility
+    g = seed(seed)
+    
+    # sets
+    train_dataset = datasets.ImageFolder(
+            path + 'datasets/cub200_cropped/train_cropped_augmented/', 
+            transforms.Compose([transforms.Resize(size=(img_size, img_size)), transforms.ToTensor(), 
+                                transforms.Normalize(mean = (0.485, 0.456, 0.406), std = (0.229, 0.224, 0.225))]))
+    train_push_dataset = datasets.ImageFolder(
+            path + 'datasets/cub200_cropped/train_cropped/',
+            transforms.Compose([transforms.Resize(size=(img_size, img_size)),transforms.ToTensor()]))
+    test_dataset = datasets.ImageFolder(
+            path + 'datasets/cub200_cropped/test_cropped/',
+            transforms.Compose([transforms.Resize(size=(img_size, img_size)),transforms.ToTensor(),
+                                transforms.Normalize(mean = (0.485, 0.456, 0.406), std = (0.229, 0.224, 0.225)),]))
 
-# run fitting
-fit(ppnet, ppnet_multi, epochs=epochs, warm_epochs=warm_epochs, epoch_reached=epoch_reached, last_layer_iterations=last_layer_iterations)
+    # dataloaders
+    train_loader = torch.utils.data.DataLoader(train_dataset, 
+                                               batch_size=train_batch_size, 
+                                               shuffle=True, 
+                                               num_workers=4, 
+                                               pin_memory=True,
+                                               worker_init_fn=seed_worker,
+                                               generator=g,)
+
+    train_push_loader = torch.utils.data.DataLoader(train_push_dataset, 
+                                                    batch_size=train_push_batch_size, 
+                                                    shuffle=False, 
+                                                    num_workers=4, 
+                                                    pin_memory=True,
+                                                    worker_init_fn=seed_worker,
+                                                    generator=g)
+
+    test_loader = torch.utils.data.DataLoader(test_dataset, 
+                                              batch_size=test_batch_size, 
+                                              shuffle=False, 
+                                              num_workers=4, 
+                                              pin_memory=True,
+                                              worker_init_fn=seed_worker,
+                                              generator=g)
+
+    # initialize model
+    if model_name != "":
+        checkpoint = torch.load(model_dir + model_name)
+    ppnet, ppnet_multi = initialize_model(base_architecture, prototype_shape, num_classes, model_name = model_name)
+
+    torch.backends.cudnn.benchmark = True
+
+    # optimizers 
+    joint_optimizer = torch.optim.Adam([{'params': ppnet.features.parameters(), 'lr': 1e-4, 'weight_decay': 1e-3}, 
+                                            {'params': ppnet.add_on_layers.parameters(), 'lr': 3e-3, 'weight_decay': 1e-3},
+                                            {'params': ppnet.prototype_vectors, 'lr': 3e-3},])
+    joint_lr_scheduler = torch.optim.lr_scheduler.StepLR(joint_optimizer, step_size = 5, gamma=0.1)
+    last_layer_optimizer = torch.optim.Adam([{'params': ppnet.last_layer.parameters(), 'lr': 1e-4}])
+    warm_optimizer = torch.optim.Adam([{'params': ppnet.add_on_layers.parameters(), 'lr': 3e-3, 'weight_decay': 1e-3},
+                                    {'params': ppnet.prototype_vectors, 'lr': 3e-3},])
+
+    # load model
+    if model_name != "":
+        epoch_reached = checkpoint['epoch'] + 1 # next epoch
+        joint_optimizer.load_state_dict(checkpoint['joint_optimizer_state_dict'])
+        joint_lr_scheduler.load_state_dict(checkpoint['joint_lr_scheduler_state_dict'])
+        last_layer_optimizer.load_state_dict(checkpoint['last_layer_optimizer_state_dict'])
+        warm_optimizer.load_state_dict(checkpoint['warm_optimizer_state_dict'])
+
+
+    # run fitting
+
+    fit(ppnet=ppnet, 
+        ppnet_multi=ppnet_multi, 
+        save_name=seed+base_architecture, 
+        epochs=epochs, 
+        warm_epochs=warm_epochs, 
+        epoch_reached=epoch_reached, 
+        last_layer_iterations=last_layer_iterations)
