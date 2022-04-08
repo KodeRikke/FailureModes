@@ -1,4 +1,4 @@
-path = "" #
+path = "c:/users/ohrai/desktop/IAI/" #
 
 # libraries
 import re
@@ -351,7 +351,7 @@ def push_prototypes(dataloader, # unn
                     preprocess_input_function=None, # normalize?
                     prototype_layer_stride=1,
                     root_dir_for_saving_prototypes=None,
-                    model_name=None,
+                    save_name=None,
                     prototype_img_filename_prefix=None,
                     prototype_self_act_filename_prefix=None,
                     proto_bound_boxes_filename_prefix=None,
@@ -375,11 +375,11 @@ def push_prototypes(dataloader, # unn
         proto_bound_boxes = np.full(shape=[n_prototypes, 5], fill_value=-1)
 
     if root_dir_for_saving_prototypes != None:
-        if epoch_number != None:
+        if save_name != None:
             proto_epoch_dir = os.path.join(root_dir_for_saving_prototypes,
-                                           model_name)
+                                           save_name)
             makedir(proto_epoch_dir)
-        else:
+        else: 
             proto_epoch_dir = root_dir_for_saving_prototypes
     else:
         proto_epoch_dir = None
@@ -406,9 +406,9 @@ def push_prototypes(dataloader, # unn
                                    prototype_activation_function_in_numpy=prototype_activation_function_in_numpy)
 
     if proto_epoch_dir != None and proto_bound_boxes_filename_prefix != None:
-        np.save(os.path.join(proto_epoch_dir, proto_bound_boxes_filename_prefix + '-receptive_field' + model_name + '.npy'),
+        np.save(os.path.join(proto_epoch_dir, proto_bound_boxes_filename_prefix + '-receptive_field' + save_name + '.npy'),
                 proto_rf_boxes)
-        np.save(os.path.join(proto_epoch_dir, proto_bound_boxes_filename_prefix + model_name + '.npy'),
+        np.save(os.path.join(proto_epoch_dir, proto_bound_boxes_filename_prefix + save_name + '.npy'),
                 proto_bound_boxes)
 
     log('\tExecuting push ...', pushlog)
@@ -428,7 +428,7 @@ def update_prototypes_on_batch(search_batch_input,
                                search_y=None, # required if class_specific == True
                                num_classes=None, # required if class_specific == True
                                preprocess_input_function=None,
-                               prototype_layer_stride=1,
+                               prototype_layer_stride=1, 
                                dir_for_saving_prototypes=None,
                                prototype_img_filename_prefix=None,
                                prototype_self_act_filename_prefix=None,
@@ -1404,34 +1404,35 @@ num_prototypes = 10
 num_classes = 100
 
 # model
-model_name = ""
+model_names = ["10.3628", "0.3628"]# [""] * num_experiments
 save_name = ""
 base_architectures = ["densenet121"] * num_experiments#, "resnet34", "vgg19"]
-
-# log names
-
 
 ###########################################################################################################################
 #                                                                                                                         #
 ###########################################################################################################################
 
-if len(base_architectures) != len(seeds):
+if len(base_architectures) != len(seeds) != len(list(range(num_experiments))):
     raise Exception("base_architectures and seeds must be of equal length!")
 
 # cuda
 cuda = torch.device('cuda') if torch.cuda.is_available() else "cpu"
 print("Using : ", cuda)
 
-for seed, base_architecture, in zip(seeds, base_architectures):
+for i, seed, base_architecture, model_name in zip(list(range(num_experiments)), seeds, base_architectures, model_names):
+
+    # save
+    save_name = "C"+str(num_classes)+"P"+str(num_prototypes)+"S"+str(seed)+"E"+str(i)+base_architecture
+
     # prototype shapes
     prototype_shape = (num_prototypes * num_classes, 128, 1, 1) 
     if base_architecture == "resnet34": # 256 for resnet34 and 128 for densenet121, vgg19
         prototype_shape = (num_prototypes * num_classes, 256, 1, 1) 
         
     # log names
-    trainlog = "trainlog" + "C" + str(num_classes) + "P" + str(num_prototypes) + "S" + str(seed) + base_architecture + ".txt"
-    analysislog = "analysislog" + "C" + str(num_classes) + "P" + str(num_prototypes) + "S" + str(seed) + base_architecture + ".txt"
-    pushlog = "pushlog" + "C" + str(num_classes) + "P" + str(num_prototypes) + "S" + str(seed) + base_architecture + ".txt"
+    trainlog = "trainlog" + save_name + ".txt"
+    analysislog = "analysislog" + save_name + ".txt"
+    pushlog = "pushlog" + save_name + ".txt"
     
     # reproducibility
     g = set_seed(seed)
@@ -1476,8 +1477,9 @@ for seed, base_architecture, in zip(seeds, base_architectures):
 
     # initialize model
     if model_name != "":
-        checkpoint = torch.load(model_dir + model_name)
-    ppnet, ppnet_multi = initialize_model(base_architecture, prototype_shape, num_classes, model_name = model_name)
+        model_name_full = "100C10P1337densenet1216nopush" + model_name + ".pth" #100C10P1337densenet1216nopush0.3628 # 
+        checkpoint = torch.load(model_dir + model_name_full)
+    ppnet, ppnet_multi = initialize_model(base_architecture, prototype_shape, num_classes, model_name = model_name_full)
 
     torch.backends.cudnn.benchmark = True
 
@@ -1498,24 +1500,23 @@ for seed, base_architecture, in zip(seeds, base_architectures):
         last_layer_optimizer.load_state_dict(checkpoint['last_layer_optimizer_state_dict'])
         warm_optimizer.load_state_dict(checkpoint['warm_optimizer_state_dict'])
 
-
     # run fitting
-    fit(model=ppnet, 
-        modelmulti=ppnet_multi, 
-        save_name="C"+str(num_classes)+"P"+str(num_prototypes)+"S"+str(seed)+base_architecture+"_", 
-        epochs=epochs, 
-        warm_epochs=warm_epochs, 
-        epoch_reached=epoch_reached, 
-        last_layer_iterations=last_layer_iterations)
+    # fit(model=ppnet, 
+    #     modelmulti=ppnet_multi, 
+    #     save_name=save_name+"_", 
+    #     epochs=epochs, 
+    #     warm_epochs=warm_epochs, 
+    #     epoch_reached=epoch_reached, 
+    #     last_layer_iterations=last_layer_iterations)
 
-# push_prototypes(
-#     train_push_loader, # pytorch dataloader unnorm
-#     prototype_network_parallel=ppnet_multi,
-#     preprocess_input_function = preprocess, # norma?
-#     prototype_layer_stride=1,
-#     root_dir_for_saving_prototypes = model_dir + '/img/',
-#     model_name = str(num_classes)+"C"+str(num_prototypes)+"P"+str(seed)+base_architecture,
-#     prototype_img_filename_prefix = 'prototype-img',
-#     prototype_self_act_filename_prefix = 'prototype-self-act',
-#     proto_bound_boxes_filename_prefix = 'bb',
-#     save_prototype_class_identity=True)
+    push_prototypes(
+        train_push_loader, # pytorch dataloader unnorm
+        prototype_network_parallel=ppnet_multi,
+        preprocess_input_function = preprocess, # norma?
+        prototype_layer_stride=1,
+        root_dir_for_saving_prototypes = model_dir + '/img/',
+        save_name = save_name,
+        prototype_img_filename_prefix = 'prototype-img',
+        prototype_self_act_filename_prefix = 'prototype-self-act',
+        proto_bound_boxes_filename_prefix = 'bb',
+        save_prototype_class_identity=True)
