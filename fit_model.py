@@ -1,4 +1,4 @@
-path = "c:/users/ohrai/desktop/IAI/" #
+path = "" #
 
 # libraries
 import re
@@ -50,7 +50,6 @@ def set_seed(seed):
     torch.use_deterministic_algorithms(True) # CNN
     g = torch.Generator()                    # dataloaders
     return g.manual_seed(seed)
-    
    
 def list_of_distances(X, Y):
     return torch.sum((torch.unsqueeze(X, dim=2) - torch.unsqueeze(Y.t(), dim=0)) ** 2, dim=1)
@@ -1400,13 +1399,13 @@ train_push_batch_size = 75
 
 # prototypes
 img_size = 224
-num_prototypes = 10
+num_prototypes = 10 # (per class)
 num_classes = 100
 
 # model
-model_names = ["10.3628", "0.3628"]# [""] * num_experiments
+model_names = [""] * num_experiments # ["2nopush0.123"]
 save_name = ""
-base_architectures = ["densenet121"] * num_experiments#, "resnet34", "vgg19"]
+base_architectures = ["resnet34", "vgg19"]
 
 ###########################################################################################################################
 #                                                                                                                         #
@@ -1477,7 +1476,7 @@ for i, seed, base_architecture, model_name in zip(list(range(num_experiments)), 
 
     # initialize model
     if model_name != "":
-        model_name_full = "100C10P1337densenet1216nopush" + model_name + ".pth" #100C10P1337densenet1216nopush0.3628 # 
+        model_name_full = save_model + "_" + model_name + ".pth" #100C10P1337densenet1216nopush0.3628 # 
         checkpoint = torch.load(model_dir + model_name_full)
     ppnet, ppnet_multi = initialize_model(base_architecture, prototype_shape, num_classes, model_name = model_name_full)
 
@@ -1501,22 +1500,22 @@ for i, seed, base_architecture, model_name in zip(list(range(num_experiments)), 
         warm_optimizer.load_state_dict(checkpoint['warm_optimizer_state_dict'])
 
     # run fitting
-    # fit(model=ppnet, 
-    #     modelmulti=ppnet_multi, 
-    #     save_name=save_name+"_", 
-    #     epochs=epochs, 
-    #     warm_epochs=warm_epochs, 
-    #     epoch_reached=epoch_reached, 
-    #     last_layer_iterations=last_layer_iterations)
+    fit(model=ppnet, 
+        modelmulti=ppnet_multi, 
+        save_name=save_name+"_", 
+        epochs=epochs, 
+        warm_epochs=warm_epochs, 
+        epoch_reached=epoch_reached, 
+        last_layer_iterations=last_layer_iterations)
 
-    push_prototypes(
-        train_push_loader, # pytorch dataloader unnorm
-        prototype_network_parallel=ppnet_multi,
-        preprocess_input_function = preprocess, # norma?
-        prototype_layer_stride=1,
-        root_dir_for_saving_prototypes = model_dir + '/img/',
-        save_name = save_name,
-        prototype_img_filename_prefix = 'prototype-img',
-        prototype_self_act_filename_prefix = 'prototype-self-act',
-        proto_bound_boxes_filename_prefix = 'bb',
-        save_prototype_class_identity=True)
+#     push_prototypes(
+#         train_push_loader, # pytorch dataloader unnorm
+#         prototype_network_parallel=ppnet_multi,
+#         preprocess_input_function = preprocess, # norma?
+#         prototype_layer_stride=1,
+#         root_dir_for_saving_prototypes = model_dir + '/img/',
+#         save_name = save_name,
+#         prototype_img_filename_prefix = 'prototype-img',
+#         prototype_self_act_filename_prefix = 'prototype-self-act',
+#         proto_bound_boxes_filename_prefix = 'bb',
+#         save_prototype_class_identity=True)
