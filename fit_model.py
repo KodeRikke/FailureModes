@@ -1,18 +1,19 @@
-path = "C:/Users/OhRai/Desktop/IAI/" # path containing the datasets folder
+path = "" #
 
 # libraries
-# import re
-# from tkinter import Y
+import re
+from tkinter import Y
+from collections import Counter
 import math
 import os
-# import copy
+import copy
 import cv2
 import heapq
 import matplotlib.image as plt
 import numpy as np
 import time
-# from torch.autograd import Variable
-# from PIL import Image
+from torch.autograd import Variable
+from PIL import Image
 import torch
 import torch.nn as nn
 import torch.utils.model_zoo as model_zoo
@@ -20,18 +21,35 @@ import torch.nn.functional as F
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 
-model_dir = path + 'pretrained_models/'
+
+model_dir = path + 'saved_models/'
 
 # functions
 def makedir(path):
     if not os.path.exists(path):
         os.makedirs(path)
+        
+makedir(model_dir)
 
 def log(line, file):
   with open(path + file, 'a+') as log:
       content = log.read()
       log.write(content + line + str("\n"))
 
+def seed_worker(worker_id):
+    worker_seed = torch.initial_seed() % 2**32
+    numpy.random.seed(worker_seed)
+    random.seed(worker_seed)
+    
+def seed(seed):
+    torch.manual_seed(seed)                  # pytorch
+    random.seed(seed)                        # python
+    np.random.seed(seed)                     # numpy
+    torch.use_deterministic_algorithms(True) # CNN
+    g = torch.Generator()                    # dataloaders
+    return g.manual_seed(seed)
+    
+   
 def list_of_distances(X, Y):
     return torch.sum((torch.unsqueeze(X, dim=2) - torch.unsqueeze(Y.t(), dim=0)) ** 2, dim=1)
 
@@ -108,7 +126,7 @@ def find_k_nearest_patches_to_prototypes(dataloader, prototype_network_parallel,
                                          root_dir_for_saving_images='./nearest', prototype_activation_function_in_numpy=None):
     prototype_network_parallel.eval()
 
-    log('find nearest patches', "analysislog.txt")
+    log('find nearest patches', analysislog)
     start = time.time()
     n_prototypes = prototype_network_parallel.module.num_prototypes
     
@@ -271,7 +289,7 @@ def find_k_nearest_patches_to_prototypes(dataloader, prototype_network_parallel,
                 labels_all_prototype)
 
     end = time.time()
-    log('\tfind nearest patches time: \t{0}'.format(end - start), "analysislog.txt")
+    log('\tfind nearest patches time: \t{0}'.format(end - start), analysislog)
 
     return labels_all_prototype
 
@@ -326,9 +344,221 @@ def compute_proto_layer_rf_info_v2(img_size, layer_filter_sizes, layer_strides, 
                                                 layer_padding='VALID', previous_layer_rf_info=rf_info)
     return proto_layer_rf_info
 
+def push_prototypes(dataloader, # unn
+                    prototype_network_parallel, # nn
+                    preprocess_input_function=None, # normalize?
+                    prototype_layer_stride=1,
+                    root_dir_for_saving_prototypes=None,
+                    epoch_number=None,
+                    prototype_img_filename_prefix=None,
+                    prototype_self_act_filename_prefix=None,
+                    proto_bound_boxes_filename_prefix=None,
+                    save_prototype_class_identity=True,
+                    prototype_activation_function_in_numpy=None):
+
+    prototype_network_parallel.eval()
+    log('\tpush', trainlog)
+
+    start = time.time()
+    prototype_shape = prototype_network_parallel.module.prototype_shape
+    n_prototypes = prototype_network_parallel.module.num_prototypes
+    global_min_proto_dist = np.full(n_prototypes, np.inf)
+    global_min_fmap_patches = np.zeros([n_prototypes, prototype_shape[1],prototype_shape[2],prototype_shape[3]])
+
+    if save_prototype_class_identity:
+        proto_rf_boxes = np.full(shape=[n_prototypes, 6], fill_value=-1)
+        proto_bound_boxes = np.full(shape=[n_prototypes, 6], fill_value=-1)
+    else:
+        proto_rf_boxes = np.full(shape=[n_prototypes, 5], fill_value=-1)
+        proto_bound_boxes = np.full(shape=[n_prototypes, 5], fill_value=-1)
+
+    if root_dir_for_saving_prototypes != None:
+        if epoch_number != None:
+            proto_epoch_dir = os.path.join(root_dir_for_saving_prototypes,
+                                           'epoch-'+str(epoch_number))
+            makedir(proto_epoch_dir)
+        else:
+            proto_epoch_dir = root_dir_for_saving_prototypes
+    else:
+        proto_epoch_dir = None
+
+    search_batch_size = dataloader.batch_size
+    num_classes = prototype_network_parallel.module.num_classes
+
+    for push_iter, (search_batch_input, search_y) in enumerate(dataloader):
+        start_index_of_search_batch = push_iter * search_batch_size
+        update_prototypes_on_batch(search_batch_input,
+                                   start_index_of_search_batch,
+                                   prototype_network_parallel,
+                                   global_min_proto_dist,
+                                   global_min_fmap_patches,
+                                   proto_rf_boxes,
+                                   proto_bound_boxes,
+                                   search_y=search_y,
+                                   num_classes=num_classes,
+                                   preprocess_input_function=preprocess_input_function,
+                                   prototype_layer_stride=prototype_layer_stride,
+                                   dir_for_saving_prototypes=proto_epoch_dir,
+                                   prototype_img_filename_prefix=prototype_img_filename_prefix,
+                                   prototype_self_act_filename_prefix=prototype_self_act_filename_prefix,
+                                   prototype_activation_function_in_numpy=prototype_activation_function_in_numpy)
+
+    if proto_epoch_dir != None and proto_bound_boxes_filename_prefix != None:
+        np.save(os.path.join(proto_epoch_dir, proto_bound_boxes_filename_prefix + '-receptive_field' + str(epoch_number) + '.npy'),
+                proto_rf_boxes)
+        np.save(os.path.join(proto_epoch_dir, proto_bound_boxes_filename_prefix + str(epoch_number) + '.npy'),
+                proto_bound_boxes)
+
+    log('\tExecuting push ...', pushlog)
+    prototype_update = np.reshape(global_min_fmap_patches,
+                                  tuple(prototype_shape))
+    prototype_network_parallel.module.prototype_vectors.data.copy_(torch.tensor(prototype_update, dtype=torch.float32).cuda())
+    end = time.time()
+    log('\tpush time: \t{0}'.format(end -  start), pushlog)
+
+def update_prototypes_on_batch(search_batch_input,
+                               start_index_of_search_batch,
+                               prototype_network_parallel,
+                               global_min_proto_dist, # this will be updated
+                               global_min_fmap_patches, # this will be updated
+                               proto_rf_boxes, # this will be updated
+                               proto_bound_boxes, # this will be updated
+                               search_y=None, # required if class_specific == True
+                               num_classes=None, # required if class_specific == True
+                               preprocess_input_function=None,
+                               prototype_layer_stride=1,
+                               dir_for_saving_prototypes=None,
+                               prototype_img_filename_prefix=None,
+                               prototype_self_act_filename_prefix=None,
+                               prototype_activation_function_in_numpy=None):
+
+    prototype_network_parallel.eval()
+
+    with torch.no_grad():
+        search_batch = search_batch_input.cuda()
+        protoL_input_torch, proto_dist_torch = prototype_network_parallel.module.push_forward(search_batch)
+
+    protoL_input_ = np.copy(protoL_input_torch.detach().cpu().numpy())
+    proto_dist_ = np.copy(proto_dist_torch.detach().cpu().numpy())
+
+    del protoL_input_torch, proto_dist_torch
+
+    class_to_img_index_dict = {key: [] for key in range(num_classes)}
+        # img_y is the image's integer label
+    for img_index, img_y in enumerate(search_y):
+        img_label = img_y.item()
+        class_to_img_index_dict[img_label].append(img_index)
+
+    prototype_shape = prototype_network_parallel.module.prototype_shape
+    n_prototypes, proto_h, proto_w = prototype_shape[0], prototype_shape[2], prototype_shape[3]
+    
+    for j in range(n_prototypes):
+        target_class = torch.argmax(prototype_network_parallel.module.prototype_class_identity[j]).item()
+        if len(class_to_img_index_dict[target_class]) == 0:
+            continue
+        proto_dist_j = proto_dist_[class_to_img_index_dict[target_class]][:,j,:,:]
+
+        batch_min_proto_dist_j = np.amin(proto_dist_j)
+        if batch_min_proto_dist_j < global_min_proto_dist[j]:
+            batch_argmin_proto_dist_j = \
+                list(np.unravel_index(np.argmin(proto_dist_j, axis=None),
+                                      proto_dist_j.shape))
+            batch_argmin_proto_dist_j[0] = class_to_img_index_dict[target_class][batch_argmin_proto_dist_j[0]]
+
+            # retrieve the corresponding feature map patch
+            img_index_in_batch = batch_argmin_proto_dist_j[0]
+            fmap_height_start_index = batch_argmin_proto_dist_j[1] * prototype_layer_stride
+            fmap_height_end_index = fmap_height_start_index + proto_h
+            fmap_width_start_index = batch_argmin_proto_dist_j[2] * prototype_layer_stride
+            fmap_width_end_index = fmap_width_start_index + proto_w
+
+            batch_min_fmap_patch_j = protoL_input_[img_index_in_batch,
+                                                   :,
+                                                   fmap_height_start_index:fmap_height_end_index,
+                                                   fmap_width_start_index:fmap_width_end_index]
+
+            global_min_proto_dist[j] = batch_min_proto_dist_j
+            global_min_fmap_patches[j] = batch_min_fmap_patch_j
+            
+            # get the receptive field boundary of the image patch
+            # that generates the representation
+            protoL_rf_info = prototype_network_parallel.module.proto_layer_rf_info
+            rf_prototype_j = compute_rf_prototype(search_batch.size(2), batch_argmin_proto_dist_j, protoL_rf_info)
+            
+            # get the whole image
+            original_img_j = search_batch_input[rf_prototype_j[0]]
+            original_img_j = original_img_j.numpy()
+            original_img_j = np.transpose(original_img_j, (1, 2, 0))
+            original_img_size = original_img_j.shape[0]
+            
+            # crop out the receptive field
+            rf_img_j = original_img_j[rf_prototype_j[1]:rf_prototype_j[2],
+                                      rf_prototype_j[3]:rf_prototype_j[4],]
+            
+            # save the prototype receptive field information
+            proto_rf_boxes[j, 0] = rf_prototype_j[0] + start_index_of_search_batch
+            proto_rf_boxes[j, 1] = rf_prototype_j[1]
+            proto_rf_boxes[j, 2] = rf_prototype_j[2]
+            proto_rf_boxes[j, 3] = rf_prototype_j[3]
+            proto_rf_boxes[j, 4] = rf_prototype_j[4]
+            if proto_rf_boxes.shape[1] == 6 and search_y is not None:
+                proto_rf_boxes[j, 5] = search_y[rf_prototype_j[0]].item()
+
+            # find the highly activated region of the original image
+            proto_dist_img_j = proto_dist_[img_index_in_batch, j, :, :]
+            proto_act_img_j = np.log((proto_dist_img_j + 1) / (proto_dist_img_j + prototype_network_parallel.module.epsilon))
+            upsampled_act_img_j = cv2.resize(proto_act_img_j, dsize=(original_img_size, original_img_size), interpolation=cv2.INTER_CUBIC)
+            proto_bound_j = find_high_activation_crop(upsampled_act_img_j)
+            # crop out the image patch with high activation as prototype image
+            proto_img_j = original_img_j[proto_bound_j[0]:proto_bound_j[1], proto_bound_j[2]:proto_bound_j[3], :]
+
+            # save the prototype boundary (rectangular boundary of highly activated region)
+            proto_bound_boxes[j, 0] = proto_rf_boxes[j, 0]
+            proto_bound_boxes[j, 1] = proto_bound_j[0]
+            proto_bound_boxes[j, 2] = proto_bound_j[1]
+            proto_bound_boxes[j, 3] = proto_bound_j[2]
+            proto_bound_boxes[j, 4] = proto_bound_j[3]
+            if proto_bound_boxes.shape[1] == 6 and search_y is not None:
+                proto_bound_boxes[j, 5] = search_y[rf_prototype_j[0]].item()
+
+            if dir_for_saving_prototypes is not None:
+                if prototype_self_act_filename_prefix is not None:
+                    # save the numpy array of the prototype self activation
+                    np.save(os.path.join(dir_for_saving_prototypes,
+                                         prototype_self_act_filename_prefix + str(j) + '.npy'),
+                            proto_act_img_j)
+                if prototype_img_filename_prefix is not None:
+                    # save the whole image containing the prototype as png
+                    plt.imsave(os.path.join(dir_for_saving_prototypes, prototype_img_filename_prefix + '-original' + str(j) + '.png'),
+                               original_img_j, vmin=0.0, vmax=1.0)
+                    # overlay (upsampled) self activation on original image and save the result
+                    rescaled_act_img_j = upsampled_act_img_j - np.amin(upsampled_act_img_j)
+                    rescaled_act_img_j = rescaled_act_img_j / np.amax(rescaled_act_img_j)
+                    heatmap = cv2.applyColorMap(np.uint8(255*rescaled_act_img_j), cv2.COLORMAP_JET)
+                    heatmap = np.float32(heatmap) / 255
+                    heatmap = heatmap[...,::-1]
+                    overlayed_original_img_j = 0.5 * original_img_j + 0.3 * heatmap
+                    plt.imsave(os.path.join(dir_for_saving_prototypes, prototype_img_filename_prefix + '-original_with_self_act' + str(j) + '.png'),
+                               overlayed_original_img_j, vmin=0.0, vmax=1.0)
+                    
+                    # if different from the original (whole) image, save the prototype receptive field as png
+                    if rf_img_j.shape[0] != original_img_size or rf_img_j.shape[1] != original_img_size:
+                        plt.imsave(os.path.join(dir_for_saving_prototypes, prototype_img_filename_prefix + '-receptive_field' + str(j) + '.png'),
+                                   rf_img_j, vmin=0.0, vmax=1.0)
+                        overlayed_rf_img_j = overlayed_original_img_j[rf_prototype_j[1]:rf_prototype_j[2], rf_prototype_j[3]:rf_prototype_j[4]]
+                        plt.imsave(os.path.join(dir_for_saving_prototypes,prototype_img_filename_prefix + '-receptive_field_with_self_act' + str(j) + '.png'),
+                                   overlayed_rf_img_j, vmin=0.0, vmax=1.0)
+                    
+                    # save the prototype image (highly activated region of the whole image)
+                    plt.imsave(os.path.join(dir_for_saving_prototypes, prototype_img_filename_prefix + str(j) + '.png'),
+                               proto_img_j, vmin=0.0, vmax=1.0)            
+    del class_to_img_index_dict
+
 # resnet
 model_urls = {
-    'resnet34': 'https://download.pytorch.org/models/resnet34-333f7ec4.pth'
+    'resnet34': 'https://download.pytorch.org/models/resnet34-333f7ec4.pth',
+    'vgg16': 'https://download.pytorch.org/models/vgg16-397923af.pth',
+    'densenet121': 'https://download.pytorch.org/models/densenet121-a639ec97.pth'
 }
 
 cfg = {'A': [64, 'M', 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
@@ -388,6 +618,84 @@ class BasicBlock(nn.Module):
         block_paddings = [1, 1]
 
         return block_kernel_sizes, block_strides, block_paddings
+
+class VGG_features(nn.Module):
+
+    def __init__(self, cfg, batch_norm=False, init_weights=True):
+        super(VGG_features, self).__init__()
+
+        self.batch_norm = batch_norm
+
+        self.kernel_sizes = []
+        self.strides = []
+        self.paddings = []
+
+        self.features = self._make_layers(cfg, batch_norm)
+
+        if init_weights:
+            self._initialize_weights()
+
+    def forward(self, x):
+        x = self.features(x)
+        return x
+
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, 0, 0.01)
+                nn.init.constant_(m.bias, 0)
+
+    def _make_layers(self, cfg, batch_norm):
+
+        self.n_layers = 0
+
+        layers = []
+        in_channels = 3
+        for v in cfg:
+            if v == 'M':
+                layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
+
+                self.kernel_sizes.append(2)
+                self.strides.append(2)
+                self.paddings.append(0)
+
+            else:
+                conv2d = nn.Conv2d(in_channels, v, kernel_size=3, padding=1)
+                if batch_norm:
+                    layers += [conv2d, nn.BatchNorm2d(v), nn.ReLU(inplace=True)]
+                else:
+                    layers += [conv2d, nn.ReLU(inplace=True)]
+
+                self.n_layers += 1
+
+                self.kernel_sizes.append(3)
+                self.strides.append(1)
+                self.paddings.append(1)
+
+                in_channels = v
+
+        return nn.Sequential(*layers)
+
+    def conv_info(self):
+        return self.kernel_sizes, self.strides, self.paddings
+
+    def num_layers(self):
+        '''
+        the number of conv layers in the network
+        '''
+        return self.n_layers
+
+    def __repr__(self):
+        template = 'VGG{}, batch_norm={}'
+        return template.format(self.num_layers() + 3,
+                               self.batch_norm)
 
 class ResNet_features(nn.Module):
     '''
@@ -499,7 +807,28 @@ def resnet34_features(pretrained=False, **kwargs):
         model.load_state_dict(my_dict, strict=False)
     return model
 
-base_architecture_to_features = {'resnet34': resnet34_features,}
+def vgg19_features(pretrained=False, **kwargs):
+    """VGG 19-layer model (configuration "E")
+
+    Args:
+        pretrained (bool): If True, returns a model pre-trained on ImageNet
+    """
+    if pretrained:
+        kwargs['init_weights'] = False
+    model = VGG_features(cfg['E'], batch_norm=False, **kwargs)
+    if pretrained:
+        my_dict = model_zoo.load_url(model_urls['vgg19'], model_dir=model_dir)
+        keys_to_remove = set()
+        for key in my_dict:
+            if key.startswith('classifier'):
+                keys_to_remove.add(key)
+        for key in keys_to_remove:
+            del my_dict[key]
+        model.load_state_dict(my_dict, strict=False)
+    return model
+
+base_architecture_to_features = {'resnet34': resnet34_features,
+                                 'vgg19': vgg19_features}
 
 # model fugle
 class PPNet(nn.Module):
@@ -511,7 +840,7 @@ class PPNet(nn.Module):
 
         super(PPNet, self).__init__()
         self.img_size = img_size
-        self.prototype_shape = prototype_shape
+        self.prototype_shape = prototype_shape # 2000, 512, 1, 1
         self.num_prototypes = prototype_shape[0]
         self.num_classes = num_classes
         self.epsilon = 1e-4
@@ -562,12 +891,12 @@ class PPNet(nn.Module):
         if init_weights:
             self._initialize_weights()
 
-    def conv_features(self, x):
+    def conv_features(self, x): #z
         return self.add_on_layers(self.features(x))
 
     @staticmethod
     def _weighted_l2_convolution(input, filter, weights):
-        # input of shape N * c * h * w
+        # input of shape N * c * h * w torch.Size([40, 512, 7, 7])
         # filter of shape P * c * h1 * w1
         # weight of shape P * c * h1 * w1
         input_patch_weighted_norm2 = F.conv2d(input=input ** 2, weight=weights)
@@ -577,15 +906,15 @@ class PPNet(nn.Module):
         distances = F.relu(input_patch_weighted_norm2 + intermediate_result)
         return distances
 
-    def _l2_convolution(self, x):
-        x2_patch_sum = F.conv2d(input=x ** 2, weight=self.ones)
-        xp = F.conv2d(input=x, weight=self.prototype_vectors)
+    def _l2_convolution(self, x): # x = z (torch.Size([40, 512, 7, 7]))
+        x2_patch_sum = F.conv2d(input=x ** 2, weight=self.ones)  # torch.Size([40, 2000, 7, 7])
+        xp = F.conv2d(input=x, weight=self.prototype_vectors) # torch.Size([40, 2000, 7, 7])
         intermediate_result = - 2 * xp + torch.sum(self.prototype_vectors ** 2, dim=(1, 2, 3)).view(-1, 1, 1)
         distances = F.relu(x2_patch_sum + intermediate_result)
-        return distances
+        return distances # torch.Size([40, 2000, 7, 7])
 
-    def prototype_distances(self, x):
-        return self._l2_convolution(self.conv_features(x))
+    def prototype_distances(self, x): # dist(z, prototypes)
+        return self._l2_convolution(self.conv_features(x)) 
 
     def distance_2_similarity(self, distances):
         return torch.log((distances + 1) / (distances + self.epsilon))
@@ -593,7 +922,9 @@ class PPNet(nn.Module):
     def forward(self, x):
         distances = self.prototype_distances(x)
         min_distances = -F.max_pool2d(-distances, kernel_size=(distances.size()[2], distances.size()[3]))
+        # print(min_distances.size()) torch.Size([40, 2000, 1, 1])
         min_distances = min_distances.view(-1, self.num_prototypes)
+        # print(min_distances.size()) torch.Size([40, 2000])
         prototype_activations = self.distance_2_similarity(min_distances)
         logits = self.last_layer(prototype_activations)
         return logits, min_distances
@@ -626,6 +957,30 @@ class PPNet(nn.Module):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
 
+def initialize_model(base_architecture, prototype_shape, num_classes, model_name = ""):
+    features = base_architecture_to_features[base_architecture](pretrained = True)
+    layer_filter_sizes, layer_strides, layer_paddings = features.conv_info()
+
+    ppnet = PPNet(features=features,
+                  img_size = img_size,
+                  prototype_shape = prototype_shape,
+                  num_classes = num_classes,
+                  init_weights = True,
+                  prototype_activation_function = 'log',
+                  add_on_layers_type = 'bottleneck',
+                  proto_layer_rf_info = compute_proto_layer_rf_info_v2(img_size = 224,
+                                                                      layer_filter_sizes = layer_filter_sizes,
+                                                                      layer_strides = layer_strides,
+                                                                      layer_paddings = layer_paddings,
+                                                                      prototype_kernel_size = 1))
+    if model_name != "":
+        checkpoint = torch.load(model_dir + model_name)
+        ppnet.load_state_dict(checkpoint['model_state_dict'])
+
+    ppnet = ppnet.cuda()
+    ppnet_multi = torch.nn.DataParallel(ppnet)
+    return ppnet, ppnet_multi
+
 def _train_or_test(model, dataloader, optimizer=None, use_l1_mask=True,
                    coefs=None):
     is_train = optimizer is not None
@@ -633,8 +988,8 @@ def _train_or_test(model, dataloader, optimizer=None, use_l1_mask=True,
     n_examples, n_correct, n_batches, total_cross_entropy = 0, 0, 0, 0
     total_cluster_cost, total_separation_cost, total_avg_separation_cost = 0, 0, 0
     
-#     scaler = torch.cuda.amp.GradScaler()
-#     torch.cuda.empty_cache()
+    scaler = torch.cuda.amp.GradScaler()
+    torch.cuda.empty_cache()
 
     for _, (image, label) in enumerate(dataloader):
         input, target = image.cuda(), label.cuda()
@@ -681,44 +1036,42 @@ def _train_or_test(model, dataloader, optimizer=None, use_l1_mask=True,
         if is_train:
             del prototypes_of_correct_class
             del l1_mask
-#             with torch.cuda.amp.autocast():
-            if coefs is not None:
-                loss = (coefs['crs_ent'] * cross_entropy + coefs['clst'] * cluster_cost
-                       + coefs['sep'] * separation_cost + coefs['l1'] * l1)
-            else:
-                loss = cross_entropy + 0.8 * cluster_cost - 0.08 * separation_cost + 1e-4 * l1
+            with torch.cuda.amp.autocast():
+                if coefs is not None:
+                    loss = (coefs['crs_ent'] * cross_entropy + coefs['clst'] * cluster_cost
+                            + coefs['sep'] * separation_cost + coefs['l1'] * l1)
+                else:
+                    loss = cross_entropy + 0.8 * cluster_cost - 0.08 * separation_cost + 1e-4 * l1
             optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-#             scaler.scale(loss).backward()
-#             scaler.step(optimizer)
-#             scaler.update()
-            
-            
+#             loss.backward()
+#             optimizer.step()
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
             
     end = time.time()
 
-    log('\ttime: \t{0}'.format(end -  start), "trainlog.txt")
-    log('\tcross ent: \t{0}'.format(total_cross_entropy / n_batches), "trainlog.txt")
-    log('\tcluster: \t{0}'.format(total_cluster_cost / n_batches), "trainlog.txt")
-    log('\tseparation:\t{0}'.format(total_separation_cost / n_batches), "trainlog.txt")
-    log('\tavg separation:\t{0}'.format(total_avg_separation_cost / n_batches), "trainlog.txt")
-    log('\taccu: \t\t{0}%'.format(n_correct / n_examples * 100), "trainlog.txt")
-    log('\tl1: \t\t{0}'.format(model.module.last_layer.weight.norm(p=1).item()), "trainlog.txt")
+    log('\ttime: \t{0}'.format(end -  start), trainlog)
+    log('\tcross ent: \t{0}'.format(total_cross_entropy / n_batches), trainlog)
+    log('\tcluster: \t{0}'.format(total_cluster_cost / n_batches), trainlog)
+    log('\tseparation:\t{0}'.format(total_separation_cost / n_batches), trainlog)
+    log('\tavg separation:\t{0}'.format(total_avg_separation_cost / n_batches), trainlog)
+    log('\taccu: \t\t{0}%'.format(n_correct / n_examples * 100), trainlog)
+    log('\tl1: \t\t{0}'.format(model.module.last_layer.weight.norm(p=1).item()), trainlog)
     p = model.module.prototype_vectors.view(model.module.num_prototypes, -1).cpu()
     with torch.no_grad():
         p_avg_pair_dist = torch.mean(list_of_distances(p, p))
-    log('\tp dist pair: \t{0}'.format(p_avg_pair_dist.item()), "trainlog.txt")
+    log('\tp dist pair: \t{0}'.format(p_avg_pair_dist.item()), trainlog)
 
     return n_correct / n_examples
 
 def train(model, dataloader, optimizer, coefs=None):
-    log('\ttrain', "trainlog.txt")
+    log('\ttrain', trainlog)
     model.train()
     return _train_or_test(model=model, dataloader=dataloader, optimizer=optimizer, coefs=coefs)
   
 def test(model, dataloader):
-    log('\ttest', "trainlog.txt")
+    log('\ttest', trainlog)
     model.eval()
     return _train_or_test(model=model, dataloader=dataloader, optimizer=None)
 
@@ -730,7 +1083,7 @@ def last_only(model):
     model.module.prototype_vectors.requires_grad = False
     for p in model.module.last_layer.parameters():
         p.requires_grad = True
-    log('\tlast layer', "trainlog.txt")
+    log('\tlast layer', trainlog)
 
 def warm_only(model):
     for p in model.module.features.parameters():
@@ -740,7 +1093,7 @@ def warm_only(model):
     model.module.prototype_vectors.requires_grad = True
     for p in model.module.last_layer.parameters():
         p.requires_grad = True
-    log('\twarm', "trainlog.txt")
+    log('\twarm', trainlog)
 
 def joint(model):
     for p in model.module.features.parameters():
@@ -750,226 +1103,16 @@ def joint(model):
     model.module.prototype_vectors.requires_grad = True
     for p in model.module.last_layer.parameters():
         p.requires_grad = True
-    log('\tjoint', "trainlog.txt")
+    log('\tjoint', trainlog)
 
-def push_prototypes(dataloader, # unn
-                    prototype_network_parallel, # nn
-                    preprocess_input_function=None, # normalize?
-                    prototype_layer_stride=1,
-                    root_dir_for_saving_prototypes=None,
-                    epoch_number=None,
-                    prototype_img_filename_prefix=None,
-                    prototype_self_act_filename_prefix=None,
-                    proto_bound_boxes_filename_prefix=None,
-                    save_prototype_class_identity=True,
-                    prototype_activation_function_in_numpy=None):
-
-    prototype_network_parallel.eval()
-    log('\tpush', "trainlog.txt")
-
-    start = time.time()
-    prototype_shape = prototype_network_parallel.module.prototype_shape
-    n_prototypes = prototype_network_parallel.module.num_prototypes
-    global_min_proto_dist = np.full(n_prototypes, np.inf)
-    global_min_fmap_patches = np.zeros([n_prototypes, prototype_shape[1],prototype_shape[2],prototype_shape[3]])
-
-    if save_prototype_class_identity:
-        proto_rf_boxes = np.full(shape=[n_prototypes, 6], fill_value=-1)
-        proto_bound_boxes = np.full(shape=[n_prototypes, 6], fill_value=-1)
-    else:
-        proto_rf_boxes = np.full(shape=[n_prototypes, 5], fill_value=-1)
-        proto_bound_boxes = np.full(shape=[n_prototypes, 5], fill_value=-1)
-
-    if root_dir_for_saving_prototypes != None:
-        if epoch_number != None:
-            proto_epoch_dir = os.path.join(root_dir_for_saving_prototypes,
-                                           'epoch-'+str(epoch_number))
-            makedir(proto_epoch_dir)
-        else:
-            proto_epoch_dir = root_dir_for_saving_prototypes
-    else:
-        proto_epoch_dir = None
-
-    search_batch_size = dataloader.batch_size
-    num_classes = prototype_network_parallel.module.num_classes
-
-    for push_iter, (search_batch_input, search_y) in enumerate(dataloader):
-        start_index_of_search_batch = push_iter * search_batch_size
-        update_prototypes_on_batch(search_batch_input,
-                                   start_index_of_search_batch,
-                                   prototype_network_parallel,
-                                   global_min_proto_dist,
-                                   global_min_fmap_patches,
-                                   proto_rf_boxes,
-                                   proto_bound_boxes,
-                                   search_y=search_y,
-                                   num_classes=num_classes,
-                                   preprocess_input_function=preprocess_input_function,
-                                   prototype_layer_stride=prototype_layer_stride,
-                                   dir_for_saving_prototypes=proto_epoch_dir,
-                                   prototype_img_filename_prefix=prototype_img_filename_prefix,
-                                   prototype_self_act_filename_prefix=prototype_self_act_filename_prefix,
-                                   prototype_activation_function_in_numpy=prototype_activation_function_in_numpy)
-
-    if proto_epoch_dir != None and proto_bound_boxes_filename_prefix != None:
-        np.save(os.path.join(proto_epoch_dir, proto_bound_boxes_filename_prefix + '-receptive_field' + str(epoch_number) + '.npy'),
-                proto_rf_boxes)
-        np.save(os.path.join(proto_epoch_dir, proto_bound_boxes_filename_prefix + str(epoch_number) + '.npy'),
-                proto_bound_boxes)
-
-    log('\tExecuting push ...', "trainlog.txt")
-    prototype_update = np.reshape(global_min_fmap_patches,
-                                  tuple(prototype_shape))
-    prototype_network_parallel.module.prototype_vectors.data.copy_(torch.tensor(prototype_update, dtype=torch.float32).cuda())
-    end = time.time()
-    log('\tpush time: \t{0}'.format(end -  start), "trainlog.txt")
-
-def update_prototypes_on_batch(search_batch_input,
-                               start_index_of_search_batch,
-                               prototype_network_parallel,
-                               global_min_proto_dist, # this will be updated
-                               global_min_fmap_patches, # this will be updated
-                               proto_rf_boxes, # this will be updated
-                               proto_bound_boxes, # this will be updated
-                               search_y=None, # required if class_specific == True
-                               num_classes=None, # required if class_specific == True
-                               preprocess_input_function=None,
-                               prototype_layer_stride=1,
-                               dir_for_saving_prototypes=None,
-                               prototype_img_filename_prefix=None,
-                               prototype_self_act_filename_prefix=None,
-                               prototype_activation_function_in_numpy=None):
-
-    prototype_network_parallel.eval()
-
-    with torch.no_grad():
-        search_batch = search_batch_input.cuda()
-        protoL_input_torch, proto_dist_torch = prototype_network_parallel.module.push_forward(search_batch)
-
-    protoL_input_ = np.copy(protoL_input_torch.detach().cpu().numpy())
-    proto_dist_ = np.copy(proto_dist_torch.detach().cpu().numpy())
-
-    del protoL_input_torch, proto_dist_torch
-
-    class_to_img_index_dict = {key: [] for key in range(num_classes)}
-        # img_y is the image's integer label
-    for img_index, img_y in enumerate(search_y):
-        img_label = img_y.item()
-        class_to_img_index_dict[img_label].append(img_index)
-
-    prototype_shape = prototype_network_parallel.module.prototype_shape
-    n_prototypes, proto_h, proto_w = prototype_shape[0], prototype_shape[2], prototype_shape[3]
-
-    for j in range(n_prototypes):
-        target_class = torch.argmax(prototype_network_parallel.module.prototype_class_identity[j]).item()
-        if len(class_to_img_index_dict[target_class]) == 0:
-            continue
-        proto_dist_j = proto_dist_[class_to_img_index_dict[target_class]][:,j,:,:]
-
-        batch_min_proto_dist_j = np.amin(proto_dist_j)
-        if batch_min_proto_dist_j < global_min_proto_dist[j]:
-            batch_argmin_proto_dist_j = \
-                list(np.unravel_index(np.argmin(proto_dist_j, axis=None),
-                                      proto_dist_j.shape))
-            batch_argmin_proto_dist_j[0] = class_to_img_index_dict[target_class][batch_argmin_proto_dist_j[0]]
-
-            # retrieve the corresponding feature map patch
-            img_index_in_batch = batch_argmin_proto_dist_j[0]
-            fmap_height_start_index = batch_argmin_proto_dist_j[1] * prototype_layer_stride
-            fmap_height_end_index = fmap_height_start_index + proto_h
-            fmap_width_start_index = batch_argmin_proto_dist_j[2] * prototype_layer_stride
-            fmap_width_end_index = fmap_width_start_index + proto_w
-
-            batch_min_fmap_patch_j = protoL_input_[img_index_in_batch,
-                                                   :,
-                                                   fmap_height_start_index:fmap_height_end_index,
-                                                   fmap_width_start_index:fmap_width_end_index]
-
-            global_min_proto_dist[j] = batch_min_proto_dist_j
-            global_min_fmap_patches[j] = batch_min_fmap_patch_j
-            
-            # get the receptive field boundary of the image patch
-            # that generates the representation
-            protoL_rf_info = prototype_network_parallel.module.proto_layer_rf_info
-            rf_prototype_j = compute_rf_prototype(search_batch.size(2), batch_argmin_proto_dist_j, protoL_rf_info)
-            
-            # get the whole image
-            original_img_j = search_batch_input[rf_prototype_j[0]]
-            original_img_j = original_img_j.numpy()
-            original_img_j = np.transpose(original_img_j, (1, 2, 0))
-            original_img_size = original_img_j.shape[0]
-            
-            # crop out the receptive field
-            rf_img_j = original_img_j[rf_prototype_j[1]:rf_prototype_j[2],
-                                      rf_prototype_j[3]:rf_prototype_j[4],]
-            
-            # save the prototype receptive field information
-            proto_rf_boxes[j, 0] = rf_prototype_j[0] + start_index_of_search_batch
-            proto_rf_boxes[j, 1] = rf_prototype_j[1]
-            proto_rf_boxes[j, 2] = rf_prototype_j[2]
-            proto_rf_boxes[j, 3] = rf_prototype_j[3]
-            proto_rf_boxes[j, 4] = rf_prototype_j[4]
-            if proto_rf_boxes.shape[1] == 6 and search_y is not None:
-                proto_rf_boxes[j, 5] = search_y[rf_prototype_j[0]].item()
-
-            # find the highly activated region of the original image
-            proto_dist_img_j = proto_dist_[img_index_in_batch, j, :, :]
-            proto_act_img_j = np.log((proto_dist_img_j + 1) / (proto_dist_img_j + prototype_network_parallel.module.epsilon))
-            upsampled_act_img_j = cv2.resize(proto_act_img_j, dsize=(original_img_size, original_img_size), interpolation=cv2.INTER_CUBIC)
-            proto_bound_j = find_high_activation_crop(upsampled_act_img_j)
-            # crop out the image patch with high activation as prototype image
-            proto_img_j = original_img_j[proto_bound_j[0]:proto_bound_j[1], proto_bound_j[2]:proto_bound_j[3], :]
-
-            # save the prototype boundary (rectangular boundary of highly activated region)
-            proto_bound_boxes[j, 0] = proto_rf_boxes[j, 0]
-            proto_bound_boxes[j, 1] = proto_bound_j[0]
-            proto_bound_boxes[j, 2] = proto_bound_j[1]
-            proto_bound_boxes[j, 3] = proto_bound_j[2]
-            proto_bound_boxes[j, 4] = proto_bound_j[3]
-            if proto_bound_boxes.shape[1] == 6 and search_y is not None:
-                proto_bound_boxes[j, 5] = search_y[rf_prototype_j[0]].item()
-
-            if dir_for_saving_prototypes is not None:
-                if prototype_self_act_filename_prefix is not None:
-                    # save the numpy array of the prototype self activation
-                    np.save(os.path.join(dir_for_saving_prototypes,
-                                         prototype_self_act_filename_prefix + str(j) + '.npy'),
-                            proto_act_img_j)
-                if prototype_img_filename_prefix is not None:
-                    # save the whole image containing the prototype as png
-                    plt.imsave(os.path.join(dir_for_saving_prototypes, prototype_img_filename_prefix + '-original' + str(j) + '.png'),
-                               original_img_j, vmin=0.0, vmax=1.0)
-                    # overlay (upsampled) self activation on original image and save the result
-                    rescaled_act_img_j = upsampled_act_img_j - np.amin(upsampled_act_img_j)
-                    rescaled_act_img_j = rescaled_act_img_j / np.amax(rescaled_act_img_j)
-                    heatmap = cv2.applyColorMap(np.uint8(255*rescaled_act_img_j), cv2.COLORMAP_JET)
-                    heatmap = np.float32(heatmap) / 255
-                    heatmap = heatmap[...,::-1]
-                    overlayed_original_img_j = 0.5 * original_img_j + 0.3 * heatmap
-                    plt.imsave(os.path.join(dir_for_saving_prototypes, prototype_img_filename_prefix + '-original_with_self_act' + str(j) + '.png'),
-                               overlayed_original_img_j, vmin=0.0, vmax=1.0)
-                    
-                    # if different from the original (whole) image, save the prototype receptive field as png
-                    if rf_img_j.shape[0] != original_img_size or rf_img_j.shape[1] != original_img_size:
-                        plt.imsave(os.path.join(dir_for_saving_prototypes, prototype_img_filename_prefix + '-receptive_field' + str(j) + '.png'),
-                                   rf_img_j, vmin=0.0, vmax=1.0)
-                        overlayed_rf_img_j = overlayed_original_img_j[rf_prototype_j[1]:rf_prototype_j[2], rf_prototype_j[3]:rf_prototype_j[4]]
-                        plt.imsave(os.path.join(dir_for_saving_prototypes,prototype_img_filename_prefix + '-receptive_field_with_self_act' + str(j) + '.png'),
-                                   overlayed_rf_img_j, vmin=0.0, vmax=1.0)
-                    
-                    # save the prototype image (highly activated region of the whole image)
-                    plt.imsave(os.path.join(dir_for_saving_prototypes, prototype_img_filename_prefix + str(j) + '.png'),
-                               proto_img_j, vmin=0.0, vmax=1.0)            
-    del class_to_img_index_dict
-
-def fit(model, modelmulti, epochs, warm_epochs):
-    log('start training', "trainlog.txt")
-    for epoch in range(epochs):
+def fit(model, modelmulti, epochs, warm_epochs, epoch_reached, last_layer_iterations):
+    log('start training', trainlog)
+    for epoch in range(epoch_reached, epochs):
         model.train()
         modelmulti.train()
-        log('epoch: \t{0}'.format(epoch + epoch_reached), "trainlog.txt")
+        log('epoch: \t{0}'.format(epoch), trainlog)
         
-        if epoch + epoch_reached < warm_epochs:
+        if epoch < warm_epochs:
             warm_only(model=modelmulti)
             train(model=modelmulti, dataloader=train_loader, optimizer=warm_optimizer, coefs=coefs)
         else:
@@ -980,101 +1123,132 @@ def fit(model, modelmulti, epochs, warm_epochs):
         modelmulti.eval()
         accu = test(model=modelmulti, dataloader=test_loader)
         torch.save({
-            'epoch': epoch + epoch_reached,
+            'epoch': epoch,
             'model_state_dict': model.state_dict(),
             'joint_optimizer_state_dict': joint_optimizer.state_dict(),
+            'joint_lr_scheduler_state_dict': joint_lr_scheduler.state_dict(),
             'last_layer_optimizer_state_dict': last_layer_optimizer.state_dict(),
             'warm_optimizer_state_dict' : warm_optimizer.state_dict()
-            }, os.path.join(model_dir, (str(epoch + epoch_reached) + 'nopush' + '{0:.4f}.pth').format(accu)))
+            }, os.path.join(model_dir, (str(epoch) + 'nopush' + '{0:.4f}.pth').format(accu)))
 
-#         if epoch >= push_start and epoch in push_epochs:
-#             push_prototypes(
-#                 train_push_loader, # pytorch dataloader unnorm
-#                 prototype_network_parallel=modelmulti,
-#                 preprocess_input_function = preprocess, # norma?
-#                 prototype_layer_stride=1,
-#                 root_dir_for_saving_prototypes = model_dir + '/img/',
-#                 epoch_number = epoch + epoch_reached, # if not provided, prototypes saved previously will be overwritten
-#                 prototype_img_filename_prefix = 'prototype-img',
-#                 prototype_self_act_filename_prefix = 'prototype-self-act',
-#                 proto_bound_boxes_filename_prefix = 'bb',
-#                 save_prototype_class_identity=True)
-#             last_only(model=modelmulti)
-#             for i in range(20):
-#                 log('iteration: \t{0}'.format(i), "trainlog.txt")
-#                 _ = train(model=modelmulti, dataloader=train_loader, optimizer=last_layer_optimizer, coefs=coefs)
-#                 accu = test(model=modelmulti, dataloader=test_loader)
-#             torch.save({
-#                 'epoch': epoch + epoch_reached,
-#                 'model_state_dict': model.state_dict(),
-#                 'joint_optimizer_state_dict': joint_optimizer.state_dict(),
-#                 'last_layer_optimizer_state_dict': last_layer_optimizer.state_dict(),
-#                 'warm_optimizer_state_dict' : warm_optimizer.state_dict()
-#                 }, os.path.join(model_dir, (str(epoch + epoch_reached) + 'push' + '{0:.4f}.pth').format(accu)))
+        if epoch >= push_start and epoch in push_epochs:
+            push_prototypes(
+                train_push_loader, # pytorch dataloader unnorm
+                prototype_network_parallel=modelmulti,
+                preprocess_input_function = preprocess, # norma?
+                prototype_layer_stride=1,
+                root_dir_for_saving_prototypes = model_dir + '/img/',
+                epoch_number = epoch, # if not provided, prototypes saved previously will be overwritten
+                prototype_img_filename_prefix = 'prototype-img',
+                prototype_self_act_filename_prefix = 'prototype-self-act',
+                proto_bound_boxes_filename_prefix = 'bb',
+                save_prototype_class_identity=True)
+            last_only(model=modelmulti)
+            for i in range(last_layer_iterations):
+                log('iteration: \t{0}'.format(i), trainlog)
+                _ = train(model=modelmulti, dataloader=train_loader, optimizer=last_layer_optimizer, coefs=coefs)
+                accu = test(model=modelmulti, dataloader=test_loader)
+                torch.save({
+                    'epoch': epoch,
+                    'model_state_dict': model.state_dict(),
+                    'joint_optimizer_state_dict': joint_optimizer.state_dict(),
+                    'joint_lr_scheduler_state_dict': joint_lr_scheduler.state_dict(),
+                    'last_layer_optimizer_state_dict': last_layer_optimizer.state_dict(),
+                    'warm_optimizer_state_dict' : warm_optimizer.state_dict()
+                    }, os.path.join(model_dir, (str(epoch) + '_' + str(i) + 'push' + '{0:.4f}.pth').format(accu)))
 
-def initialize_model(model_name = ""):
-    features = base_architecture_to_features['resnet34'](pretrained = True)
-    layer_filter_sizes, layer_strides, layer_paddings = features.conv_info()
+###############################################################################################################################
+#                                                                settings                                                     #
+###############################################################################################################################
 
-    ppnet = PPNet(features=features,
-                  img_size = img_size,
-                  prototype_shape = (2000, 512, 1, 1),
-                  num_classes = 200,
-                  init_weights = True,
-                  prototype_activation_function = 'log',
-                  add_on_layers_type = 'bottleneck',
-                  proto_layer_rf_info = compute_proto_layer_rf_info_v2(img_size = 224,
-                                                                      layer_filter_sizes = layer_filter_sizes,
-                                                                      layer_strides = layer_strides,
-                                                                      layer_paddings = layer_paddings,
-                                                                      prototype_kernel_size = 1))
-    if model_name != "":
-        checkpoint = torch.load(model_dir + model_name)
-        ppnet.load_state_dict(checkpoint['model_state_dict'])
+# training
+epochs = 10
+warm_epochs = 5
+epoch_reached = 0
+push_start = 10
+last_layer_iterations = 20
+push_epochs = [i for i in range(epochs) if i % 10 == 0]
 
-    ppnet = ppnet.cuda()
-    ppnet_multi = torch.nn.DataParallel(ppnet)
-    return ppnet, ppnet_multi
+# loss parameters
+coefs = {'crs_ent': 1, 'clst': 0.8, 'sep': -0.08, 'l1': 1e-4,}
 
-################################################################################################################################
+# batch sizes
+train_batch_size = 80
+test_batch_size = 100
+train_push_batch_size = 75
 
-cuda = torch.device('cuda')  if torch.cuda.is_available() else "cpu"
+# prototypes
+img_size = 224
+prototype_shape = (1000, 256, 1, 1)
+num_classes = 100
+
+# model
+model_name = ""
+base_architecture = "resnet34"
+
+# log names
+trainlog = "trainlog.txt"
+analysislog = "analysislog.txt"
+pushlog = "pushlog.txt"
+
+# reproducibility
+seed = 1337
+
+###########################################################################################################################
+#                                                                                                                         #
+###########################################################################################################################
+
+# cuda
+cuda = torch.device('cuda') if torch.cuda.is_available() else "cpu"
 print("Using : ", cuda)
 
-
-img_size = 224
-prototype_shape = (2000, 128, 1, 1)
-num_classes = 200
-
-train_batch_size = 40
-test_batch_size = 40
-train_push_batch_size = 40
+# reproducibility
+g = seed(seed)
 
 # sets
 train_dataset = datasets.ImageFolder(
         path + 'datasets/cub200_cropped/train_cropped_augmented/', 
         transforms.Compose([transforms.Resize(size=(img_size, img_size)), transforms.ToTensor(), 
                             transforms.Normalize(mean = (0.485, 0.456, 0.406), std = (0.229, 0.224, 0.225))]))
-train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=train_batch_size, shuffle=True, num_workers=4, pin_memory=True) # 4 workers?
-
 train_push_dataset = datasets.ImageFolder(
         path + 'datasets/cub200_cropped/train_cropped/',
         transforms.Compose([transforms.Resize(size=(img_size, img_size)),transforms.ToTensor()]))
-train_push_loader = torch.utils.data.DataLoader(
-        train_push_dataset, batch_size=train_push_batch_size, shuffle=False, num_workers=4, pin_memory=True) # 4 workers?
-
 test_dataset = datasets.ImageFolder(
         path + 'datasets/cub200_cropped/test_cropped/',
         transforms.Compose([transforms.Resize(size=(img_size, img_size)),transforms.ToTensor(),
                             transforms.Normalize(mean = (0.485, 0.456, 0.406), std = (0.229, 0.224, 0.225)),]))
-test_loader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=test_batch_size, shuffle=False, num_workers=4, pin_memory=True) # 4 workers?
 
-model_name = ""
+# dataloaders
+train_loader = torch.utils.data.DataLoader(train_dataset, 
+                                           batch_size=train_batch_size, 
+                                           shuffle=True, 
+                                           num_workers=4, 
+                                           pin_memory=True,
+                                           worker_init_fn=seed_worker,
+                                           generator=g,)
+
+train_push_loader = torch.utils.data.DataLoader(train_push_dataset, 
+                                                batch_size=train_push_batch_size, 
+                                                shuffle=False, 
+                                                num_workers=4, 
+                                                pin_memory=True,
+                                                worker_init_fn=seed_worker,
+                                                generator=g)
+
+test_loader = torch.utils.data.DataLoader(test_dataset, 
+                                          batch_size=test_batch_size, 
+                                          shuffle=False, 
+                                          num_workers=4, 
+                                          pin_memory=True,
+                                          worker_init_fn=seed_worker,
+                                          generator=g)
+
+# initialize model
 if model_name != "":
     checkpoint = torch.load(model_dir + model_name)
-ppnet, ppnet_multi = initialize_model(model_name = model_name)
+ppnet, ppnet_multi = initialize_model(base_architecture, prototype_shape, num_classes, model_name = model_name)
+
+torch.backends.cudnn.benchmark = True
 
 # optimizers 
 joint_optimizer = torch.optim.Adam([{'params': ppnet.features.parameters(), 'lr': 1e-4, 'weight_decay': 1e-3}, 
@@ -1085,20 +1259,14 @@ last_layer_optimizer = torch.optim.Adam([{'params': ppnet.last_layer.parameters(
 warm_optimizer = torch.optim.Adam([{'params': ppnet.add_on_layers.parameters(), 'lr': 3e-3, 'weight_decay': 1e-3},
                                 {'params': ppnet.prototype_vectors, 'lr': 3e-3},])
 
-epochs = 1000
-warm_epochs = 5
-epoch_reached = 0
-push_start = 1000
-push_epochs = [i for i in range(epochs) if i % 10 == 0]
-coefs = {'crs_ent': 1, 'clst': 0.8, 'sep': -0.08, 'l1': 1e-4,}
-
+# load model
 if model_name != "":
-    epoch_reached = checkpoint['epoch'] + 1
-    print(epoch_reached)
+    epoch_reached = checkpoint['epoch'] + 1 # next epoch
     joint_optimizer.load_state_dict(checkpoint['joint_optimizer_state_dict'])
+    joint_lr_scheduler.load_state_dict(checkpoint['joint_lr_scheduler_state_dict'])
     last_layer_optimizer.load_state_dict(checkpoint['last_layer_optimizer_state_dict'])
     warm_optimizer.load_state_dict(checkpoint['warm_optimizer_state_dict'])
     
 
 # run fitting
-fit(ppnet, ppnet_multi, epochs = epochs, warm_epochs = warm_epochs)
+fit(ppnet, ppnet_multi, epochs=epochs, warm_epochs=warm_epochs, epoch_reached=epoch_reached, last_layer_iterations=last_layer_iterations)
