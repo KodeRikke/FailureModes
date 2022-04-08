@@ -12,6 +12,8 @@ import heapq
 import matplotlib.image as plt
 import numpy as np
 import time
+import random
+from collections import OrderedDict
 from torch.autograd import Variable
 from PIL import Image
 import torch
@@ -41,7 +43,7 @@ def seed_worker(worker_id):
     numpy.random.seed(worker_seed)
     random.seed(worker_seed)
     
-def seed(seed):
+def set_seed(seed):
     torch.manual_seed(seed)                  # pytorch
     random.seed(seed)                        # python
     np.random.seed(seed)                     # numpy
@@ -1366,7 +1368,7 @@ num_classes = 100
 # model
 model_name = ""
 save_name = ""
-base_architectures = ["densenet121"] * num_experiments
+base_architectures = ["densenet121"] * num_experiments#, "resnet34", "vgg19"]
 
 # log names
 
@@ -1389,12 +1391,12 @@ for seed, base_architecture, in zip(seeds, base_architectures):
         prototype_shape = (num_prototypes * num_classes, 256, 1, 1) 
         
     # log names
-    trainlog = "trainlog" + str(num_classes) + "C" + str(num_prototypes) + "P" + seed + base_architecture + ".txt"
-    analysislog = "analysislog" + str(num_classes) + "C" + str(num_prototypes) + "P" + seed + base_architecture + ".txt"
-    pushlog = "pushlog" + str(num_classes) + "C" + str(num_prototypes) + "P" + seed + base_architecture + ".txt"
+    trainlog = "trainlog" + str(num_classes) + "C" + str(num_prototypes) + "P" + str(seed) + base_architecture + ".txt"
+    analysislog = "analysislog" + str(num_classes) + "C" + str(num_prototypes) + "P" + str(seed) + base_architecture + ".txt"
+    pushlog = "pushlog" + str(num_classes) + "C" + str(num_prototypes) + "P" + str(seed) + base_architecture + ".txt"
     
     # reproducibility
-    g = seed(seed)
+    g = set_seed(seed)
     
     # sets
     train_dataset = datasets.ImageFolder(
@@ -1460,9 +1462,9 @@ for seed, base_architecture, in zip(seeds, base_architectures):
 
 
     # run fitting
-    fit(ppnet=ppnet, 
-        ppnet_multi=ppnet_multi, 
-        save_name=str(num_classes)+"C"+str(num_prototypes)+"P"+seed+base_architecture, 
+    fit(model=ppnet, 
+        modelmulti=ppnet_multi, 
+        save_name=str(num_classes)+"C"+str(num_prototypes)+"P"+str(seed)+base_architecture, 
         epochs=epochs, 
         warm_epochs=warm_epochs, 
         epoch_reached=epoch_reached, 
