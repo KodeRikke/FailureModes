@@ -1340,7 +1340,7 @@ def fit(model, modelmulti, save_name, epochs, warm_epochs, epoch_reached, last_l
 num_experiments = 2
 
 # reproducibility
-seeds = [1337]# * num_experiments
+seeds = [1337] * num_experiments
 
 # training
 epochs = 10
@@ -1360,7 +1360,7 @@ train_push_batch_size = 75
 
 # prototypes
 img_size = 224
-prototype_shape = (1000, 128, 1, 1) # 256 for resnet34 and 128 for densenet121, vgg19
+num_prototypes = 10
 num_classes = 100
 
 # model
@@ -1383,10 +1383,15 @@ cuda = torch.device('cuda') if torch.cuda.is_available() else "cpu"
 print("Using : ", cuda)
 
 for seed, base_architecture, in zip(seeds, base_architectures):
+    # prototype shapes
+    prototype_shape = (num_prototypes * num_classes, 128, 1, 1) 
+    if base_architecture == "resnet34": # 256 for resnet34 and 128 for densenet121, vgg19
+        prototype_shape = (num_prototypes * num_classes, 256, 1, 1) 
+        
     # log names
-    trainlog = "trainlog" + seed + base_architecture + ".txt"
-    analysislog = "analysislog" + seed + base_architecture + ".txt"
-    pushlog = "pushlog" + seed + base_architecture + ".txt"
+    trainlog = "trainlog" + num_classes + "C" + num_prototypes + "P" + seed + base_architecture + ".txt"
+    analysislog = "analysislog" + num_classes + "C" + num_prototypes + "P" + seed + base_architecture + ".txt"
+    pushlog = "pushlog" + num_classes + "C" + num_prototypes + "P" + seed + base_architecture + ".txt"
     
     # reproducibility
     g = seed(seed)
@@ -1455,10 +1460,9 @@ for seed, base_architecture, in zip(seeds, base_architectures):
 
 
     # run fitting
-
     fit(ppnet=ppnet, 
         ppnet_multi=ppnet_multi, 
-        save_name=seed+base_architecture, 
+        save_name=num_classes+"C"+num_prototypes+"P"+seed+base_architecture, 
         epochs=epochs, 
         warm_epochs=warm_epochs, 
         epoch_reached=epoch_reached, 
