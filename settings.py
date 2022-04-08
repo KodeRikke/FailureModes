@@ -1,4 +1,4 @@
-path = "c:/users/ohrai/desktop/IAI/"
+path = "./"
 
 model_dir = path + 'saved_models/'
 
