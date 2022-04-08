@@ -40,7 +40,7 @@ def log(line, file):
 
 def seed_worker(worker_id):
     worker_seed = torch.initial_seed() % 2**32
-    numpy.random.seed(worker_seed)
+    np.random.seed(worker_seed)
     random.seed(worker_seed)
     
 def set_seed(seed):
@@ -351,7 +351,7 @@ def push_prototypes(dataloader, # unn
                     preprocess_input_function=None, # normalize?
                     prototype_layer_stride=1,
                     root_dir_for_saving_prototypes=None,
-                    epoch_number=None,
+                    model_name=None,
                     prototype_img_filename_prefix=None,
                     prototype_self_act_filename_prefix=None,
                     proto_bound_boxes_filename_prefix=None,
@@ -377,7 +377,7 @@ def push_prototypes(dataloader, # unn
     if root_dir_for_saving_prototypes != None:
         if epoch_number != None:
             proto_epoch_dir = os.path.join(root_dir_for_saving_prototypes,
-                                           'epoch-'+str(epoch_number))
+                                           model_name)
             makedir(proto_epoch_dir)
         else:
             proto_epoch_dir = root_dir_for_saving_prototypes
@@ -406,9 +406,9 @@ def push_prototypes(dataloader, # unn
                                    prototype_activation_function_in_numpy=prototype_activation_function_in_numpy)
 
     if proto_epoch_dir != None and proto_bound_boxes_filename_prefix != None:
-        np.save(os.path.join(proto_epoch_dir, proto_bound_boxes_filename_prefix + '-receptive_field' + str(epoch_number) + '.npy'),
+        np.save(os.path.join(proto_epoch_dir, proto_bound_boxes_filename_prefix + '-receptive_field' + model_name + '.npy'),
                 proto_rf_boxes)
-        np.save(os.path.join(proto_epoch_dir, proto_bound_boxes_filename_prefix + str(epoch_number) + '.npy'),
+        np.save(os.path.join(proto_epoch_dir, proto_bound_boxes_filename_prefix + model_name + '.npy'),
                 proto_bound_boxes)
 
     log('\tExecuting push ...', pushlog)
@@ -611,6 +611,55 @@ class BasicBlock(nn.Module):
         block_kernel_sizes = [3, 3]
         block_strides = [self.stride, 1]
         block_paddings = [1, 1]
+
+        return block_kernel_sizes, block_strides, block_paddings
+
+class Bottleneck(nn.Module):
+    # class attribute
+    expansion = 4
+    num_layers = 3
+
+    def __init__(self, inplanes, planes, stride=1, downsample=None):
+        super(Bottleneck, self).__init__()
+        self.conv1 = conv1x1(inplanes, planes)
+        self.bn1 = nn.BatchNorm2d(planes)
+        # only conv with possibly not 1 stride
+        self.conv2 = conv3x3(planes, planes, stride)
+        self.bn2 = nn.BatchNorm2d(planes)
+        self.conv3 = conv1x1(planes, planes * self.expansion)
+        self.bn3 = nn.BatchNorm2d(planes * self.expansion)
+        self.relu = nn.ReLU(inplace=True)
+
+        # if stride is not 1 then self.downsample cannot be None
+        self.downsample = downsample
+        self.stride = stride
+
+    def forward(self, x):
+        identity = x
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out = self.relu(out)
+
+        out = self.conv3(out)
+        out = self.bn3(out)
+
+        if self.downsample is not None:
+            identity = self.downsample(x)
+
+        out += identity
+        out = self.relu(out)
+
+        return out
+
+    def block_conv_info(self):
+        block_kernel_sizes = [1, 3, 1]
+        block_strides = [1, self.stride, 1]
+        block_paddings = [0, 1, 0]
 
         return block_kernel_sizes, block_strides, block_paddings
 
@@ -1309,17 +1358,6 @@ def fit(model, modelmulti, save_name, epochs, warm_epochs, epoch_reached, last_l
             }, os.path.join(model_dir, (save_name + str(epoch) + 'nopush' + '{0:.4f}.pth').format(accu)))
 
         if epoch >= push_start and epoch in push_epochs:
-            push_prototypes(
-                train_push_loader, # pytorch dataloader unnorm
-                prototype_network_parallel=modelmulti,
-                preprocess_input_function = preprocess, # norma?
-                prototype_layer_stride=1,
-                root_dir_for_saving_prototypes = model_dir + '/img/',
-                epoch_number = epoch, # if not provided, prototypes saved previously will be overwritten
-                prototype_img_filename_prefix = 'prototype-img',
-                prototype_self_act_filename_prefix = 'prototype-self-act',
-                proto_bound_boxes_filename_prefix = 'bb',
-                save_prototype_class_identity=True)
             last_only(model=modelmulti)
             for i in range(last_layer_iterations):
                 log('iteration: \t{0}'.format(i), trainlog)
@@ -1332,7 +1370,7 @@ def fit(model, modelmulti, save_name, epochs, warm_epochs, epoch_reached, last_l
                     'joint_lr_scheduler_state_dict': joint_lr_scheduler.state_dict(),
                     'last_layer_optimizer_state_dict': last_layer_optimizer.state_dict(),
                     'warm_optimizer_state_dict' : warm_optimizer.state_dict()
-                    }, os.path.join(model_dir, (str(epoch) + '_' + str(i) + 'push' + '{0:.4f}.pth').format(accu)))
+                    }, os.path.join(model_dir, (save_name + str(epoch) + '_' + str(i) + 'push' + '{0:.4f}.pth').format(accu)))
 
 ###############################################################################################################################
 #                                                                settings                                                     #
@@ -1349,7 +1387,7 @@ epochs = 10
 warm_epochs = 5
 epoch_reached = 0
 push_start = 10
-last_layer_iterations = 20
+last_layer_iterations = 5
 push_epochs = [i for i in range(epochs) if i % 10 == 0]
 
 # loss parameters
@@ -1391,9 +1429,9 @@ for seed, base_architecture, in zip(seeds, base_architectures):
         prototype_shape = (num_prototypes * num_classes, 256, 1, 1) 
         
     # log names
-    trainlog = "trainlog" + str(num_classes) + "C" + str(num_prototypes) + "P" + str(seed) + base_architecture + ".txt"
-    analysislog = "analysislog" + str(num_classes) + "C" + str(num_prototypes) + "P" + str(seed) + base_architecture + ".txt"
-    pushlog = "pushlog" + str(num_classes) + "C" + str(num_prototypes) + "P" + str(seed) + base_architecture + ".txt"
+    trainlog = "trainlog" + "C" + str(num_classes) + "P" + str(num_prototypes) + "S" + str(seed) + base_architecture + ".txt"
+    analysislog = "analysislog" + "C" + str(num_classes) + "P" + str(num_prototypes) + "S" + str(seed) + base_architecture + ".txt"
+    pushlog = "pushlog" + "C" + str(num_classes) + "P" + str(num_prototypes) + "S" + str(seed) + base_architecture + ".txt"
     
     # reproducibility
     g = set_seed(seed)
@@ -1464,8 +1502,20 @@ for seed, base_architecture, in zip(seeds, base_architectures):
     # run fitting
     fit(model=ppnet, 
         modelmulti=ppnet_multi, 
-        save_name=str(num_classes)+"C"+str(num_prototypes)+"P"+str(seed)+base_architecture, 
+        save_name="C"+str(num_classes)+"P"+str(num_prototypes)+"S"+str(seed)+base_architecture+"_", 
         epochs=epochs, 
         warm_epochs=warm_epochs, 
         epoch_reached=epoch_reached, 
         last_layer_iterations=last_layer_iterations)
+
+# push_prototypes(
+#     train_push_loader, # pytorch dataloader unnorm
+#     prototype_network_parallel=ppnet_multi,
+#     preprocess_input_function = preprocess, # norma?
+#     prototype_layer_stride=1,
+#     root_dir_for_saving_prototypes = model_dir + '/img/',
+#     model_name = str(num_classes)+"C"+str(num_prototypes)+"P"+str(seed)+base_architecture,
+#     prototype_img_filename_prefix = 'prototype-img',
+#     prototype_self_act_filename_prefix = 'prototype-self-act',
+#     proto_bound_boxes_filename_prefix = 'bb',
+#     save_prototype_class_identity=True)
