@@ -1389,9 +1389,9 @@ for seed, base_architecture, in zip(seeds, base_architectures):
         prototype_shape = (num_prototypes * num_classes, 256, 1, 1) 
         
     # log names
-    trainlog = "trainlog" + num_classes + "C" + num_prototypes + "P" + seed + base_architecture + ".txt"
-    analysislog = "analysislog" + num_classes + "C" + num_prototypes + "P" + seed + base_architecture + ".txt"
-    pushlog = "pushlog" + num_classes + "C" + num_prototypes + "P" + seed + base_architecture + ".txt"
+    trainlog = "trainlog" + str(num_classes) + "C" + str(num_prototypes) + "P" + seed + base_architecture + ".txt"
+    analysislog = "analysislog" + str(num_classes) + "C" + str(num_prototypes) + "P" + seed + base_architecture + ".txt"
+    pushlog = "pushlog" + str(num_classes) + "C" + str(num_prototypes) + "P" + seed + base_architecture + ".txt"
     
     # reproducibility
     g = seed(seed)
@@ -1462,7 +1462,7 @@ for seed, base_architecture, in zip(seeds, base_architectures):
     # run fitting
     fit(ppnet=ppnet, 
         ppnet_multi=ppnet_multi, 
-        save_name=num_classes+"C"+num_prototypes+"P"+seed+base_architecture, 
+        save_name=str(num_classes)+"C"+str(num_prototypes)+"P"+seed+base_architecture, 
         epochs=epochs, 
         warm_epochs=warm_epochs, 
         epoch_reached=epoch_reached, 
