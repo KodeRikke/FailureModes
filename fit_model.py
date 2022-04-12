@@ -13,7 +13,7 @@ from settings import path, model_dir, num_experiments, seeds, epochs, warm_epoch
                      img_size, num_prototypes, num_classes, model_names, save_name, \
                      base_architectures
 
-from helpers import log, set_seed, seed_worker#, makedir, list_of_distances, find_high_activation_crop
+from helpers import log, set_seed, seed_worker
 
 def save_prototype_original_img_with_bbox(fname, epoch, index, bbox_height_start, bbox_height_end, bbox_width_start, bbox_width_end):
     p_img_bgr = cv2.imread(os.path.join(load_img_dir, 'epoch-'+str(epoch), 'prototype-img-original'+str(index)+'.png'))
@@ -21,11 +21,7 @@ def save_prototype_original_img_with_bbox(fname, epoch, index, bbox_height_start
     p_img_rgb = np.float32(p_img_bgr[...,::-1]) / 255
     plt.imsave(fname, p_img_rgb)
 
-from train_and_test import train, test, last_only, warm_only, joint#, _train_or_test
-
-# pretrained models
-#from pretrained_models import conv1x1, conv3x3, BasicBlock, Bottleneck, VGG_features, DenseNet_features,\
-#     ResNet_features, base_architecture_to_features, vgg19_features, densenet121_features, resnet34_features, _Transition, _DenseBlock, _DenseLayer
+from train_and_test import train, test, last_only, warm_only, joint
 
 # model fugle
 from ppnet import initialize_model
@@ -72,7 +68,7 @@ def fit(model, modelmulti, save_name, epochs, warm_epochs, epoch_reached, last_l
                     }, os.path.join(model_dir, (save_name + str(epoch) + 'I' + str(i) + 'push' + '{0:.4f}.pth').format(accu)))
 
 if len(base_architectures) != len(seeds) != len(list(range(num_experiments))):
-    raise Exception("base_architectures and seeds must be of equal length!")
+    raise Exception("base_architectures, experiments and seeds must be of equal length!")
 
 # cuda
 cuda = torch.device('cuda') if torch.cuda.is_available() else "cpu"
@@ -81,7 +77,7 @@ print("Using : ", cuda)
 for i, seed, base_architecture, model_name in zip(list(range(num_experiments)), seeds, base_architectures, model_names):
 
     # save
-    save_name = "C"+str(num_classes)+"P"+str(num_prototypes)+"S"+str(seed)+"E"+str(i)+base_architecture
+    save_name = "C"+str(num_classes)+"P"+str(num_prototypes)+"S"+str(seed)+"E"+str(i + 1)+base_architecture
 
     # prototype shapes
     prototype_shape = (num_prototypes * num_classes, 128, 1, 1) 
@@ -140,7 +136,7 @@ for i, seed, base_architecture, model_name in zip(list(range(num_experiments)), 
         checkpoint = torch.load(model_dir + model_name)
     ppnet, ppnet_multi = initialize_model(base_architecture, prototype_shape, num_classes, model_name = model_name)
 
-    torch.backends.cudnn.benchmark = True
+#     torch.backends.cudnn.benchmark = True
 
     # optimizers 
     joint_optimizer = torch.optim.Adam([{'params': ppnet.features.parameters(), 'lr': 1e-4, 'weight_decay': 1e-3}, 
