@@ -253,7 +253,7 @@ def update_prototypes_on_batch(search_batch_input,
             if proto_bound_boxes.shape[1] == 6 and search_y is not None:
                 proto_bound_boxes[j, 5] = search_y[rf_prototype_j[0]].item()
 
-            if dir_for_saving_prototypes is not None:
+            if dir_for_saving_prototypes is not None and j in list(range(150, 160)):
                 if prototype_self_act_filename_prefix is not None:
                     # save the numpy array of the prototype self activation
                     np.save(os.path.join(dir_for_saving_prototypes,
