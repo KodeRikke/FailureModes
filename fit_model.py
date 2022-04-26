@@ -77,7 +77,7 @@ print("Using : ", cuda)
 for i, seed, base_architecture, model_name in zip(list(range(num_experiments)), seeds, base_architectures, model_names):
 
     # save
-    save_name = "C"+str(num_classes)+"P"+str(num_prototypes)+"S"+str(seed)+"E"+str(i + 1)+base_architecture
+    save_name = "C"+str(num_classes)+"P"+str(num_prototypes)+"S"+str(seed)+base_architecture
 
     # prototype shapes
     prototype_shape = (num_prototypes * num_classes, 128, 1, 1) 
