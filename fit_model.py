@@ -50,7 +50,7 @@ def fit(model, modelmulti, save_name, epochs, warm_epochs, epoch_reached, last_l
             'joint_lr_scheduler_state_dict': joint_lr_scheduler.state_dict(),
             'last_layer_optimizer_state_dict': last_layer_optimizer.state_dict(),
             'warm_optimizer_state_dict' : warm_optimizer.state_dict()
-            }, os.path.join(model_dir, (save_name + str(epoch) + 'nopush' + '{0:.4f}.pth').format(accu)))
+            }, os.path.join(model_dir, (save_name + "E" + str(epoch) + 'nopush' + '{0:.4f}.pth').format(accu)))
 
         if epoch >= push_start and epoch in push_epochs:
             last_only(model=modelmulti, trainlog=trainlog)
@@ -65,7 +65,7 @@ def fit(model, modelmulti, save_name, epochs, warm_epochs, epoch_reached, last_l
                     'joint_lr_scheduler_state_dict': joint_lr_scheduler.state_dict(),
                     'last_layer_optimizer_state_dict': last_layer_optimizer.state_dict(),
                     'warm_optimizer_state_dict' : warm_optimizer.state_dict()
-                    }, os.path.join(model_dir, (save_name + str(epoch) + 'I' + str(i) + 'push' + '{0:.4f}.pth').format(accu)))
+                    }, os.path.join(model_dir, (save_name + "E" + str(epoch) + 'I' + str(i) + 'push' + '{0:.4f}.pth').format(accu)))
 
 if len(base_architectures) != len(seeds) != len(list(range(num_experiments))):
     raise Exception("base_architectures, experiments and seeds must be of equal length!")
