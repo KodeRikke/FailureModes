@@ -51,4 +51,4 @@ def set_seed(seed):
     np.random.seed(seed)                     # numpy
     torch.use_deterministic_algorithms(True) # CNN
     g = torch.Generator()                    # dataloaders
-    return g.manual_seed(seed)
+    return g.manual_seed(0)
