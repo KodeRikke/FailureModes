@@ -16,13 +16,10 @@ for ax, i, j in zip(grid, protos, names):
     ax.set_axis_off()
     im = plt.imread(name + j + i + ".png")
     h, v = np.shape(im)[0], np.shape(im)[1]
-    if v != h: 
-        placeholder = 10/v
-        v = 10
-        h = h*placeholder 
+    if v != h:
+        h = h * 10 / v
     else: 
-        v = 10 
         h = 10
-    ax.imshow(im, extent = [0, v, 0, h])
+    ax.imshow(im, extent = [0, 10, 0, h])
 
 plt.show()
