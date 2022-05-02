@@ -6,7 +6,7 @@ num_prototypes = 10
 names = num_prototypes * ["prototype-img"] + num_prototypes * ["prototype-img-original_with_self_act"] + num_prototypes * ["prototype-img-original"]
 #protos = 3 * ["225", "226", "227", "228", "229", "230", "231", "232", "233", "234", "235", "236", "237", "238", "239"] # prototype ids
 #protos = 3 * ["45", "46", "47"]
-protos = 10 * ["150", "151", "152", "153", "154", "155", "156", "157", "158", "159"]
+protos = 3 * ["150", "151", "152", "153", "154", "155", "156", "157", "158", "159"]
 name = "pushes/img5/C100P10S3E0resnet34/class/" # location of prototype images
 
 fig = plt.figure(figsize=(12, 12))
