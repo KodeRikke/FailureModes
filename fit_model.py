@@ -15,6 +15,8 @@ from settings import path, model_dir, num_experiments, seeds, epochs, warm_epoch
 
 from helpers import log, set_seed, seed_worker
 
+from push import push_prototypes
+
 def save_prototype_original_img_with_bbox(fname, epoch, index, bbox_height_start, bbox_height_end, bbox_width_start, bbox_width_end):
     p_img_bgr = cv2.imread(os.path.join(load_img_dir, 'epoch-'+str(epoch), 'prototype-img-original'+str(index)+'.png'))
     cv2.rectangle(p_img_bgr, (bbox_width_start, bbox_height_start), (bbox_width_end-1, bbox_height_end-1), (0, 255, 255), thickness=2)
@@ -53,6 +55,17 @@ def fit(model, modelmulti, save_name, epochs, warm_epochs, epoch_reached, last_l
             }, os.path.join(model_dir, (save_name + "E" + str(epoch) + 'nopush' + '{0:.4f}.pth').format(accu)))
 
         if epoch >= push_start and epoch in push_epochs:
+            push_prototypes(
+                train_push_loader, # pytorch dataloader unnorm
+                prototype_network_parallel=ppnet_multi,
+                preprocess_input_function = preprocess, # norma?
+                prototype_layer_stride=1,
+                root_dir_for_saving_prototypes = model_dir + '/img/',
+                save_name = save_name,
+                prototype_img_filename_prefix = 'prototype-img',
+                prototype_self_act_filename_prefix = 'prototype-self-act',
+                proto_bound_boxes_filename_prefix = 'bb',
+                save_prototype_class_identity=True)
             last_only(model=modelmulti, trainlog=trainlog)
             for i in range(last_layer_iterations):
                 log('iteration: \t{0}'.format(i), trainlog)
