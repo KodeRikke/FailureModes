@@ -8,7 +8,7 @@ import torchvision.datasets as datasets
 import torch
 
 from settings import path, model_dir, num_experiments, seeds, epochs, warm_epochs, \
-                     epoch_reached, push_start, last_layer_iterations, push_epochs, \
+                     epoch_reached, last_layer_iterations, push_epochs, \
                      coefs, train_batch_size, test_batch_size, train_push_batch_size, \
                      img_size, num_prototypes, num_classes, model_names, save_name, \
                      base_architectures
@@ -16,6 +16,8 @@ from settings import path, model_dir, num_experiments, seeds, epochs, warm_epoch
 from helpers import log, set_seed, seed_worker
 
 from push import push_prototypes
+
+from preprocess import preprocess
 
 def save_prototype_original_img_with_bbox(fname, epoch, index, bbox_height_start, bbox_height_end, bbox_width_start, bbox_width_end):
     p_img_bgr = cv2.imread(os.path.join(load_img_dir, 'epoch-'+str(epoch), 'prototype-img-original'+str(index)+'.png'))
@@ -54,7 +56,7 @@ def fit(model, modelmulti, save_name, epochs, warm_epochs, epoch_reached, last_l
             'warm_optimizer_state_dict' : warm_optimizer.state_dict()
             }, os.path.join(model_dir, (save_name + "E" + str(epoch) + 'nopush' + '{0:.4f}.pth').format(accu)))
 
-        if epoch >= push_start and epoch in push_epochs:
+        if epoch in push_epochs:
             push_prototypes(
                 train_push_loader, # pytorch dataloader unnorm
                 prototype_network_parallel=ppnet_multi,
