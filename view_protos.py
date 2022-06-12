@@ -9,7 +9,7 @@ num_prototypes = 15
 files = listdir(model_dir + 'img/C100P15S2resnet34_E9I19push0.7266/')[::-1]
 images = [Image.open(model_dir + 'img/C100P15S2resnet34_E9I19push0.7266/' + f) for f in files]
 
-fig, axes = plt.subplots(nrows=4, ncols=num_prototypes, figsize=(20,20))
+fig, axes = plt.subplots(nrows=3, ncols=num_prototypes, figsize=(20,20))
 for idx, image in enumerate(images):
     row = idx // num_prototypes
     col = idx %  num_prototypes
